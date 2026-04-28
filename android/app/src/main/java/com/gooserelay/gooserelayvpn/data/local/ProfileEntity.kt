@@ -1,0 +1,19 @@
+package com.gooserelay.gooserelayvpn.data.local
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "profiles")
+data class ProfileEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val debugTiming: Boolean = false,
+    val socksHost: String = "127.0.0.1",
+    val socksPort: Int = 1080,
+    val googleHost: String = "216.239.38.120",
+    val sniJson: String = "[\"www.google.com\",\"mail.google.com\",\"accounts.google.com\"]",
+    val scriptKeysText: String = "REPLACE_WITH_DEPLOYMENT_ID\nOPTIONAL_SECOND_DEPLOYMENT_ID",
+    val tunnelKey: String = "REPLACE_WITH_OUTPUT_OF_scripts_gen-key.sh",
+    val isSelected: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
