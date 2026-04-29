@@ -165,10 +165,16 @@ private fun ProfileEditorDialog(
             socksHost = root.get("socks_host")?.asString ?: socksHost
             socksPort = root.get("socks_port")?.asInt?.toString() ?: socksPort
             googleHost = root.get("google_host")?.asString ?: googleHost
-            val sni = root.getAsJsonArray("sni")?.mapNotNull { it.asString }?.joinToString(", ")
-            sniCsv = sni ?: ""
-            val keys = root.getAsJsonArray("script_keys")?.mapNotNull { it.asString }?.joinToString("\n")
-            scriptKeysText = keys ?: ""
+            sniCsv = when {
+                root.get("sni")?.isJsonArray == true -> root.getAsJsonArray("sni")?.mapNotNull { it.asString }?.joinToString(", ") ?: ""
+                root.get("sni")?.isJsonPrimitive == true -> root.get("sni")?.asString ?: ""
+                else -> ""
+            }
+            val keys = when {
+                root.get("script_keys")?.isJsonArray == true -> root.getAsJsonArray("script_keys")?.mapNotNull { it.asString }?.joinToString("\n") ?: ""
+                else -> ""
+            }
+            scriptKeysText = keys
             tunnelKey = root.get("tunnel_key")?.asString ?: tunnelKey
         }
     }
@@ -181,7 +187,7 @@ private fun ProfileEditorDialog(
             socksHost = socksHost,
             socksPort = socksPort.toIntOrNull()?.coerceIn(1, 65535) ?: 1080,
             googleHost = googleHost,
-            sniJson = sniCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
+            sniJson = if (sniCsv.isBlank()) "[]" else sniCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 .joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\""),
             scriptKeysText = scriptKeysText,
             tunnelKey = tunnelKey,
