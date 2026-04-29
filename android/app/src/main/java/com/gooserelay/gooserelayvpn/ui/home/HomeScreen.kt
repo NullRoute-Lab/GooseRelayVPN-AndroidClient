@@ -63,7 +63,6 @@ fun HomeScreen(
     val vpnState by VpnManager.state.collectAsState()
     val upBps by VpnManager.uploadSpeedBps.collectAsState()
     val downBps by VpnManager.downloadSpeedBps.collectAsState()
-    val scanStatus by VpnManager.scanStatus.collectAsState()
     val selectedProfile by viewModel.selectedProfile.collectAsState()
     val error by VpnManager.errorMessage.collectAsState()
     val context = LocalContext.current
@@ -210,7 +209,7 @@ fun HomeScreen(
                     ) {
                         MdvConnectionTelemetryCard(
                             vpnState = vpnState,
-                            scanStatus = scanStatus,
+                            
                             downBps = downBps,
                             upBps = upBps,
                             proxyHost = proxyHost,
@@ -276,7 +275,7 @@ fun HomeScreen(
 
                 MdvConnectionTelemetryCard(
                     vpnState = vpnState,
-                    scanStatus = scanStatus,
+                    
                     downBps = downBps,
                     upBps = upBps,
                     proxyHost = proxyHost,
