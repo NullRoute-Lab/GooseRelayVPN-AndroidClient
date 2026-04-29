@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -56,19 +58,41 @@ fun MdvConnectionTelemetryCard(
                 color = MdvColor.OnSurface
             )
 
-            // Show stats when available
-            if (scanStatus.statsActive > 0) {
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(MdvSpace.S1))
-                Text(
-                    text = "Active: ${scanStatus.statsActive} Sessions: ${scanStatus.statsSessionsOpen} open / ${scanStatus.statsSessionsClose} close",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MdvColor.OnSurfaceVariant
-                )
-                Text(
-                    text = "Bytes: ${formatSpeed(scanStatus.statsBytesOut)} / ${formatSpeed(scanStatus.statsBytesIn)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MdvColor.OnSurfaceVariant
-                )
+            if (scanStatus.hasStats) {
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(MdvSpace.S2))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MdvColor.SurfaceHighest.copy(alpha = 0.55f)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = MdvSpace.S2, vertical = MdvSpace.S2),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Active: ${scanStatus.statsActive}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdvColor.OnSurface
+                        )
+                        Text(
+                            text = "Sessions: open=${scanStatus.statsSessionsOpen} close=${scanStatus.statsSessionsClose}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdvColor.OnSurfaceVariant
+                        )
+                        Text(
+                            text = "Polls: ok=${scanStatus.statsPollsOk} fail=${scanStatus.statsPollsFail}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdvColor.OnSurfaceVariant
+                        )
+                        Text(
+                            text = "Bytes: out=${scanStatus.statsBytesOut} in=${scanStatus.statsBytesIn}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdvColor.OnSurfaceVariant
+                        )
+                    }
+                }
             }
 
             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(MdvSpace.S1))

@@ -56,10 +56,11 @@ object VpnManager {
         val statsActive: Int = 0,
         val statsSessionsOpen: Int = 0,
         val statsSessionsClose: Int = 0,
-        val statsBytesOut: Long = 0,
-        val statsBytesIn: Long = 0,
+        val statsBytesOut: String = "",
+        val statsBytesIn: String = "",
         val statsPollsOk: Int = 0,
-        val statsPollsFail: Int = 0
+        val statsPollsFail: Int = 0,
+        val hasStats: Boolean = false
     )
 
     private val _scanStatus = MutableStateFlow(ScanStatus())
@@ -182,34 +183,26 @@ object VpnManager {
             }
     }
 
-private fun parseScanLine(line: String) {
-        // Parse STATS line
-        val statsMatch = Regex(
-            "active=(\\d+)\\s+sessions\\(open=(\\d+)\\s+close=(\\d+)\\)\\s+frames\\(out=(\\d+)\\s+in=(\\d+)\\s+bytes\\(out=([0-9.]+)([KMG]?)\\s+in=([0-9.]+)([KMG]?)\\)\\s+polls\\(ok=(\\d+)\\s+fail=(\\d+)\\)",
-            RegexOption.IGNORE_CASE
-        ).find(line)
-        if (statsMatch != null) {
-            val bytesOut = parseBytes(statsMatch.groupValues[4], statsMatch.groupValues[5])
-            val bytesIn = parseBytes(statsMatch.groupValues[7], statsMatch.groupValues[8])
-            _scanStatus.value = _scanStatus.value.copy(
-                statsActive = statsMatch.groupValues[1].toIntOrNull() ?: 0,
-                statsSessionsOpen = statsMatch.groupValues[2].toIntOrNull() ?: 0,
-                statsSessionsClose = statsMatch.groupValues[3].toIntOrNull() ?: 0,
-                statsBytesOut = bytesOut,
-                statsBytesIn = bytesIn,
-                statsPollsOk = statsMatch.groupValues[9].toIntOrNull() ?: 0,
-                statsPollsFail = statsMatch.groupValues[10].toIntOrNull() ?: 0
-            )
-        }
-    }
+    private fun parseScanLine(line: String) {
+        // Example:
+        // STATS INFO active=23 sessions(open=147 close=124) ... bytes(out=28.7MB in=924.9KB) polls(ok=1007 fail=0)
+        val active = Regex("active=(\\d+)", RegexOption.IGNORE_CASE).find(line)
+            ?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val sessions = Regex("sessions\\(open=(\\d+)\\s+close=(\\d+)\\)", RegexOption.IGNORE_CASE).find(line)
+        val bytes = Regex("bytes\\(out=([^\\s)]+)\\s+in=([^\\s)]+)\\)", RegexOption.IGNORE_CASE).find(line)
+        val polls = Regex("polls\\(ok=(\\d+)\\s+fail=(\\d+)\\)", RegexOption.IGNORE_CASE).find(line)
 
-    private fun parseBytes(value: String, unit: String): Long {
-        val num = value.toDoubleOrNull() ?: return 0L
-        return when (unit.uppercase()) {
-            "G" -> (num * 1024 * 1024 * 1024).toLong()
-            "M" -> (num * 1024 * 1024).toLong()
-            "K" -> (num * 1024).toLong()
-            else -> num.toLong()
+        if (active != null && sessions != null && bytes != null && polls != null) {
+            _scanStatus.value = _scanStatus.value.copy(
+                statsActive = active,
+                statsSessionsOpen = sessions.groupValues[1].toIntOrNull() ?: 0,
+                statsSessionsClose = sessions.groupValues[2].toIntOrNull() ?: 0,
+                statsBytesOut = bytes.groupValues[1],
+                statsBytesIn = bytes.groupValues[2],
+                statsPollsOk = polls.groupValues[1].toIntOrNull() ?: 0,
+                statsPollsFail = polls.groupValues[2].toIntOrNull() ?: 0,
+                hasStats = true
+            )
         }
     }
 
