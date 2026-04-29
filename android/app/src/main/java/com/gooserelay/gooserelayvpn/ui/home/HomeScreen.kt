@@ -25,12 +25,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -124,6 +133,7 @@ fun HomeScreen(
         VpnManager.VpnState.ERROR -> stringResource(R.string.home_state_error)
         else -> stringResource(R.string.home_state_disconnected)
     }
+    var showHowToUse by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -228,6 +238,8 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(MdvSpace.S4))
                             MdvErrorCard(msg = msg)
                         }
+                        Spacer(modifier = Modifier.height(MdvSpace.S3))
+                        HowToUseCard(onOpen = { showHowToUse = true })
                     }
                 }
             }
@@ -296,7 +308,112 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(MdvSpace.S4))
                     MdvErrorCard(msg = msg)
                 }
+                Spacer(modifier = Modifier.height(MdvSpace.S3))
+                HowToUseCard(onOpen = { showHowToUse = true })
             }
         }
     }
+
+    if (showHowToUse) {
+        HowToUseDialog(onDismiss = { showHowToUse = false })
+    }
+}
+
+private enum class HowToLang { EN, FA }
+
+@Composable
+private fun HowToUseCard(onOpen: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), onClick = onOpen) {
+        Column(modifier = Modifier.fillMaxWidth().padding(MdvSpace.S3)) {
+            Text(
+                text = "How to Use",
+                style = MaterialTheme.typography.titleMedium,
+                color = MdvColor.OnSurface
+            )
+            Spacer(modifier = Modifier.height(MdvSpace.S1))
+            Text(
+                text = "Quick setup and usage guide (English / Persian).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MdvColor.OnSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun HowToUseDialog(onDismiss: () -> Unit) {
+    var lang by remember { mutableStateOf(HowToLang.EN) }
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val maxDialogContentHeight = (screenHeight * 0.65f)
+    val textEn = """
+        GooseRelayVPN creates a local SOCKS5 proxy and tunnels TCP traffic through your own Apps Script + VPS relay.
+
+        Quick setup:
+        1) Prepare your VPS and keep goose-server running.
+        2) Deploy apps_script/Code.gs and copy Deployment ID(s).
+        3) Generate tunnel key with scripts/gen-key.sh.
+        4) In Profile, set socks_host/socks_port, script_keys, and tunnel_key.
+        5) Connect from Home and wait for SOCKS to become ready.
+
+        Usage:
+        - Set your browser/app proxy to SOCKS5 (host/port from profile).
+        - Prefer SOCKS5 hostname mode (socks5h) to avoid DNS leaks.
+        - Keep your tunnel_key private.
+    """.trimIndent()
+    val textFa = """
+        GooseRelayVPN یک پراکسی محلی SOCKS5 می‌سازد و ترافیک TCP را از مسیر Apps Script و VPS خودتان عبور می‌دهد.
+
+        راه‌اندازی سریع:
+        ۱) VPS را آماده کنید و goose-server را اجرا نگه دارید.
+        ۲) فایل apps_script/Code.gs را Deploy کنید و Deployment ID را بردارید.
+        ۳) با scripts/gen-key.sh کلید tunnel بسازید.
+        ۴) در Profile مقادیر socks_host/socks_port و script_keys و tunnel_key را تنظیم کنید.
+        ۵) از Home روی Connect بزنید و آماده شدن SOCKS را صبر کنید.
+
+        استفاده:
+        - مرورگر/اپ را روی SOCKS5 همان host/port تنظیم کنید.
+        - برای جلوگیری از نشت DNS از حالت socks5h استفاده کنید.
+        - tunnel_key را محرمانه نگه دارید.
+    """.trimIndent()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { Button(onClick = onDismiss) { Text("Close") } },
+        title = { Text("How to Use") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = maxDialogContentHeight)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(MdvSpace.S2)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(MdvSpace.S2)) {
+                    AssistChip(
+                        onClick = { lang = HowToLang.EN },
+                        label = { Text("English") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (lang == HowToLang.EN) {
+                                MdvColor.PrimaryContainer.copy(alpha = 0.2f)
+                            } else MdvColor.SurfaceHigh
+                        )
+                    )
+                    AssistChip(
+                        onClick = { lang = HowToLang.FA },
+                        label = { Text("فارسی") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (lang == HowToLang.FA) {
+                                MdvColor.PrimaryContainer.copy(alpha = 0.2f)
+                            } else MdvColor.SurfaceHigh
+                        )
+                    )
+                }
+                Text(
+                    text = if (lang == HowToLang.EN) textEn else textFa,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MdvColor.OnSurface
+                )
+            }
+        }
+    )
 }
