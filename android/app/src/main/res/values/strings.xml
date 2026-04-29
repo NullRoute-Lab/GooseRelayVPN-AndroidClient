@@ -44,7 +44,7 @@
     <string name="title_home">Home</string>
     <string name="home_network_status">NETWORK STATUS</string>
     <string name="home_no_profile_selected">No profile selected</string>
-    <string name="home_brand_short">GooseRelay</string>
+    <string name="home_brand_short">GooseRelay-HN</string>
     <string name="home_open_info">Open info page</string>
     <string name="home_state_connected">Connected</string>
     <string name="home_state_connecting">Connecting...</string>
@@ -121,7 +121,7 @@
     <string name="global_username">Username</string>
     <string name="global_password">Password</string>
     <string name="global_sharing_help">Use these endpoints to share your VPN connection with other devices or apps on the same network.</string>
-    <string name="info_app_name_title">GooseRelayVPN-HN</string>
+    <string name="info_app_name_title">GooseRelayVPN</string>
     <string name="info_overview_subtitle">Project overview and build details</string>
     <string name="info_build_information">Build Information</string>
     <string name="info_project_links">Project Links</string>
@@ -137,6 +137,6 @@
     <string name="notification_connecting">Connecting…</string>
     <string name="notification_disconnected">VPN disconnected</string>
     <string name="project_main_github">https://github.com/Kianmhz/GooseRelayVPN</string>
-    <string name="project_android_client_github">https://github.com/Kianmhz/GooseRelayVPN-AndroidClient</string>
+    <string name="project_android_client_github">https://github.com/Hidden-Node/GooseRelayVPN-AndroidClient</string>
     <string name="engine_version">v1.3.0</string>
 </resources>

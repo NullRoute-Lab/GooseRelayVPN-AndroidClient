@@ -3,7 +3,9 @@ package mobile
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,13 +13,16 @@ import (
 	"github.com/kianmhz/GooseRelayVPN/internal/carrier"
 	"github.com/kianmhz/GooseRelayVPN/internal/config"
 	"github.com/kianmhz/GooseRelayVPN/internal/session"
-	"github.com/kianmhz/GooseRelayVPN/internal/socks"
+	isocks "github.com/kianmhz/GooseRelayVPN/internal/socks"
+	"github.com/things-go/go-socks5"
+	"github.com/things-go/go-socks5/statute"
 	"github.com/xjasonlyu/tun2socks/v2/engine"
 )
 
 var (
 	mu        sync.Mutex
 	cancelFn  context.CancelFunc
+	socksLn   net.Listener
 	running   bool
 	tunActive bool
 )
@@ -71,15 +76,50 @@ func StartClient(configPath string, logPath string) error {
 		}
 	}()
 
-	factory := socks.SessionFactory(func(target string) *session.Session {
+	factory := isocks.SessionFactory(func(target string) *session.Session {
 		return carr.NewSession(target)
 	})
 
-	err = socks.Serve(ctx, cfg.ListenAddr, factory)
+	server := socks5.NewServer(
+		socks5.WithDial(func(_ context.Context, _, addr string) (net.Conn, error) {
+			s := factory(addr)
+			log.Printf("[socks] new session %x for %s", s.ID[:4], addr)
+			return isocks.NewVirtualConn(s), nil
+		}),
+		socks5.WithAssociateHandle(func(_ context.Context, w io.Writer, _ *socks5.Request) error {
+			_ = socks5.SendReply(w, statute.RepCommandNotSupported, nil)
+			return fmt.Errorf("UDP associate not supported")
+		}),
+		socks5.WithResolver(noopResolver{}),
+	)
+
+	ln, lerr := net.Listen("tcp", cfg.ListenAddr)
+	if lerr != nil {
+		mu.Lock()
+		running = false
+		cancelFn = nil
+		mu.Unlock()
+		return lerr
+	}
+	mu.Lock()
+	socksLn = ln
+	mu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+		mu.Lock()
+		if socksLn != nil {
+			_ = socksLn.Close()
+		}
+		mu.Unlock()
+	}()
+
+	err = server.Serve(ln)
 
 	mu.Lock()
 	running = false
 	cancelFn = nil
+	socksLn = nil
 	mu.Unlock()
 	return err
 }
@@ -90,6 +130,10 @@ func StopClient() {
 	defer mu.Unlock()
 	if cancelFn != nil {
 		cancelFn()
+	}
+	if socksLn != nil {
+		_ = socksLn.Close()
+		socksLn = nil
 	}
 }
 
@@ -122,3 +166,8 @@ func StopTun() {
 	}
 }
 
+type noopResolver struct{}
+
+func (noopResolver) Resolve(ctx context.Context, _ string) (context.Context, net.IP, error) {
+	return ctx, nil, nil
+}

@@ -437,8 +437,8 @@ class GooseRelayVpnService : VpnService() {
             }
         }
 
-        repeat(5) {
-            delay(400L)
+        repeat(15) {
+            delay(300L)
             if (!isLocalPortInUse(port)) {
                 VpnManager.appendLog("SOCKS5 port $port released successfully")
                 return
@@ -454,8 +454,8 @@ class GooseRelayVpnService : VpnService() {
         VpnManager.appendLog("Go core is still running, stopping it first...")
         runCatching { mobile.Mobile.stopClient() }
         
-        repeat(5) {
-            delay(300L)
+        repeat(20) {
+            delay(200L)
             if (!mobile.Mobile.isRunning()) {
                 VpnManager.appendLog("Go core stopped successfully")
                 return
