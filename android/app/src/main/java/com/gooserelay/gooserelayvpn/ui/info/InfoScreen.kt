@@ -53,7 +53,6 @@ import com.gooserelay.gooserelayvpn.ui.theme.MdvSpace
 fun InfoScreen(onBack: () -> Unit) {
     val uriHandler = LocalUriHandler.current
     val mainGithubLink = stringResource(R.string.project_main_github)
-    val mainTelegramLink = stringResource(R.string.project_main_telegram)
     val androidClientGithubLink = stringResource(R.string.project_android_client_github)
     val engineVersion = stringResource(R.string.engine_version)
 
@@ -144,17 +143,12 @@ fun InfoScreen(onBack: () -> Unit) {
                         InfoLinkRow(
                             title = stringResource(R.string.info_main_github),
                             link = mainGithubLink,
-                            onOpen = { uriHandler.openUri("https://$mainGithubLink") }
-                        )
-                        InfoLinkRow(
-                            title = stringResource(R.string.info_main_telegram),
-                            link = mainTelegramLink,
-                            onOpen = { uriHandler.openUri("https://$mainTelegramLink") }
+                            onOpen = { uriHandler.openUri(mainGithubLink.ensureUrlScheme()) }
                         )
                         InfoLinkRow(
                             title = stringResource(R.string.info_android_client),
                             link = androidClientGithubLink,
-                            onOpen = { uriHandler.openUri("https://$androidClientGithubLink") }
+                            onOpen = { uriHandler.openUri(androidClientGithubLink.ensureUrlScheme()) }
                         )
                     }
                 }
@@ -173,6 +167,10 @@ fun InfoScreen(onBack: () -> Unit) {
             }
         }
     }
+}
+
+private fun String.ensureUrlScheme(): String {
+    return if (startsWith("http://") || startsWith("https://")) this else "https://$this"
 }
 
 @Composable

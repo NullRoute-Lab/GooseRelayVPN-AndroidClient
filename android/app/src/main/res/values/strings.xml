@@ -126,7 +126,6 @@
     <string name="info_build_information">Build Information</string>
     <string name="info_project_links">Project Links</string>
     <string name="info_main_github">Main GitHub</string>
-    <string name="info_main_telegram">Main Telegram</string>
     <string name="info_android_client">GooseRelay Android Client</string>
     <string name="info_version_info">Version Info</string>
     <string name="info_app_version">App Version</string>
@@ -137,8 +136,7 @@
     <string name="notification_connected">VPN is connected</string>
     <string name="notification_connecting">Connecting…</string>
     <string name="notification_disconnected">VPN disconnected</string>
-    <string name="project_main_github">github.com/masterking32/GooseRelayVPN</string>
-    <string name="project_main_telegram">t.me/gooserelayvpn</string>
+    <string name="project_main_github">https://github.com/Kianmhz/GooseRelayVPN</string>
     <string name="project_android_client_github">github.com/Hidden-Node/GooseRelayVPN-AndroidClient</string>
-    <string name="engine_version">v2026.04.12.234117-978faee</string>
+    <string name="engine_version">v1.3.0</string>
 </resources>
