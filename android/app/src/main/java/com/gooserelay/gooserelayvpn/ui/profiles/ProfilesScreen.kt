@@ -31,6 +31,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -255,6 +256,10 @@ private fun ProfileEditorDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }, modifier = Modifier.weight(1f)) { Text("Import JSON") }
+                    OutlinedButton(onClick = { exportLauncher.launch("goose_profile.json") }, modifier = Modifier.weight(1f)) { Text("Export JSON") }
+                }
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Profile Name") })
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Debug Timing")
@@ -266,10 +271,6 @@ private fun ProfileEditorDialog(
                 OutlinedTextField(value = sniCsv, onValueChange = { sniCsv = it }, label = { Text("sni (comma separated)") })
                 OutlinedTextField(value = scriptKeysText, onValueChange = { scriptKeysText = it }, label = { Text("script_keys (one per line)") }, minLines = 3)
                 OutlinedTextField(value = tunnelKey, onValueChange = { tunnelKey = it }, label = { Text("tunnel_key") })
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }) { Text("Import JSON") }
-                    Button(onClick = { exportLauncher.launch("goose_profile.json") }) { Text("Export JSON") }
-                }
                 validationError?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, color = MdvColor.Error)
