@@ -72,11 +72,6 @@ object VpnManager {
 
     fun updateState(newState: VpnState) {
         _state.value = newState
-        if (newState == VpnState.CONNECTED) {
-            _scanStatus.value = _scanStatus.value.copy(
-                scanning = false
-            )
-        }
     }
 
     fun setError(message: String) {
@@ -152,7 +147,7 @@ object VpnManager {
 
         updateState(VpnState.CONNECTING)
         clearError()
-        _scanStatus.value = ScanStatus(scanning = true)
+        _scanStatus.value = ScanStatus()
 
         val intent = Intent(context, GooseRelayVpnService::class.java).apply {
             action = GooseRelayVpnService.ACTION_CONNECT
