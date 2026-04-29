@@ -190,7 +190,7 @@ object VpnManager {
 private fun parseScanLine(line: String) {
         // Parse STATS line
         val statsMatch = Regex(
-            "active=(\\d+)\\s+sessions\\(open=(\\d+)\\s+close=(\\d+)\\)\\s+frames\\(out=(\\d+)\\s+in=(\\d+)\\)\\s+bytes\\(out=([0-9.]+)([KMG]?)\\s+in=([0-9.]+)([KMG]?)\\)\\s+polls\\(ok=(\\d+)\\s+fail=(\\d+)\\)",
+            "active=(\\d+)\\s+sessions\\(open=(\\d+)\\s+close=(\\d+)\\)\\s+frames\\(out=(\\d+)\\s+in=(\\d+)\\s+bytes\\(out=([0-9.]+)([KMG]?)\\s+in=([0-9.]+)([KMG]?)\\)\\s+polls\\(ok=(\\d+)\\s+fail=(\\d+)\\)",
             RegexOption.IGNORE_CASE
         ).find(line)
         if (statsMatch != null) {
@@ -206,7 +206,6 @@ private fun parseScanLine(line: String) {
                 statsPollsFail = statsMatch.groupValues[10].toIntOrNull() ?: 0
             )
         }
-    }
     }
 
     private fun parseBytes(value: String, unit: String): Long {
