@@ -209,15 +209,13 @@ fun HomeScreen(
                     ) {
                         MdvConnectionTelemetryCard(
                             vpnState = vpnState,
-                            
                             downBps = downBps,
                             upBps = upBps,
                             proxyHost = proxyHost,
                             proxyPort = proxyPort,
                             socksAuthEnabled = socksAuthEnabled,
                             socksUser = socksUser,
-                            socksPass = socksPass,
-                            isConnecting = isConnecting
+                            socksPass = socksPass
                         )
                         Spacer(modifier = Modifier.height(MdvSpace.S3))
                         MdvProfileSelectorCard(
@@ -275,15 +273,13 @@ fun HomeScreen(
 
                 MdvConnectionTelemetryCard(
                     vpnState = vpnState,
-                    
                     downBps = downBps,
                     upBps = upBps,
                     proxyHost = proxyHost,
                     proxyPort = proxyPort,
                     socksAuthEnabled = socksAuthEnabled,
                     socksUser = socksUser,
-                    socksPass = socksPass,
-                    isConnecting = isConnecting
+                    socksPass = socksPass
                 )
 
                 Spacer(modifier = Modifier.height(MdvSpace.S3))
