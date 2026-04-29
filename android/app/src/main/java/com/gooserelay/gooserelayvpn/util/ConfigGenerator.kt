@@ -25,16 +25,13 @@ object ConfigGenerator {
     fun exportProfileJson(profile: ProfileEntity): String = generateConfig(profile)
 
     private fun parseSni(value: String): JsonArray {
+        if (value.isBlank()) return JsonArray()
         return try {
             val type = object : TypeToken<List<String>>() {}.type
             val list = gson.fromJson<List<String>>(value, type).orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
             JsonArray().apply { list.forEach { add(it) } }
         } catch (_: Exception) {
-            JsonArray().apply {
-                add("www.google.com")
-                add("mail.google.com")
-                add("accounts.google.com")
-            }
+            JsonArray()
         }
     }
 

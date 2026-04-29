@@ -131,6 +131,10 @@ class GooseRelayVpnService : VpnService() {
                 val proxyMode = globalSettings.connectionMode.equals("PROXY", ignoreCase = true)
 
                 VpnManager.appendLog("Loading profile: ${profile.name}")
+
+                // Check if Go core is still running from previous session
+                ensureGoCoreStopped()
+
                 ensureSocksPortAvailable(socksPort)
 
                 // Generate config files
@@ -429,6 +433,13 @@ class GooseRelayVpnService : VpnService() {
         }
 
         throw IllegalStateException("SOCKS5 port $port is already in use. Change LISTEN_PORT or close the app using it.")
+    }
+
+    private suspend fun ensureGoCoreStopped() {
+        if (!mobile.Mobile.isRunning()) return
+        VpnManager.appendLog("Go core is still running, stopping it first...")
+        runCatching { mobile.Mobile.stopClient() }
+        delay(500L)
     }
 
     private fun isLocalPortInUse(port: Int): Boolean {

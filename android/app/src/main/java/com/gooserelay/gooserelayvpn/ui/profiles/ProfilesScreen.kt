@@ -150,23 +150,25 @@ private fun ProfileEditorDialog(
     var socksHost by remember { mutableStateOf(profile?.socksHost ?: "127.0.0.1") }
     var socksPort by remember { mutableStateOf((profile?.socksPort ?: 1080).toString()) }
     var googleHost by remember { mutableStateOf(profile?.googleHost ?: "216.239.38.120") }
-    var sniCsv by remember { mutableStateOf((profile?.sniJson ?: "[\"www.google.com\",\"mail.google.com\",\"accounts.google.com\"]").replace("[", "").replace("]", "").replace("\"", "")) }
-    var scriptKeysText by remember { mutableStateOf(profile?.scriptKeysText ?: "REPLACE_WITH_DEPLOYMENT_ID\nOPTIONAL_SECOND_DEPLOYMENT_ID") }
-    var tunnelKey by remember { mutableStateOf(profile?.tunnelKey ?: "REPLACE_WITH_OUTPUT_OF_scripts_gen-key.sh") }
+    var sniCsv by remember { mutableStateOf(profile?.sniJson?.replace("[", "")?.replace("]", "")?.replace("\"", "") ?: "") }
+    var scriptKeysText by remember { mutableStateOf(profile?.scriptKeysText ?: "") }
+    var tunnelKey by remember { mutableStateOf(profile?.tunnelKey ?: "") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching {
             val raw = readTextFromUri(context, uri)
             val root = Gson().fromJson(raw, JsonObject::class.java)
+            name = root.get("name")?.asString ?: name
             debugTiming = root.get("debug_timing")?.asBoolean ?: debugTiming
             socksHost = root.get("socks_host")?.asString ?: socksHost
             socksPort = root.get("socks_port")?.asInt?.toString() ?: socksPort
             googleHost = root.get("google_host")?.asString ?: googleHost
             val sni = root.getAsJsonArray("sni")?.mapNotNull { it.asString }?.joinToString(", ")
-            if (!sni.isNullOrBlank()) sniCsv = sni
+            sniCsv = sni ?: ""
             val keys = root.getAsJsonArray("script_keys")?.mapNotNull { it.asString }?.joinToString("\n")
-            if (!keys.isNullOrBlank()) scriptKeysText = keys
+            scriptKeysText = keys ?: ""
             tunnelKey = root.get("tunnel_key")?.asString ?: tunnelKey
         }
     }
@@ -193,6 +195,12 @@ private fun ProfileEditorDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             Button(onClick = {
+                validationError = when {
+                    scriptKeysText.isBlank() -> "Script keys are required"
+                    tunnelKey.isBlank() -> "Tunnel key is required"
+                    else -> null
+                }
+                if (validationError != null) return@Button
                 val sniJson = sniCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
                     .joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")
                 onSave(
@@ -233,6 +241,10 @@ private fun ProfileEditorDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }) { Text("Import JSON") }
                     Button(onClick = { exportLauncher.launch("goose_profile.json") }) { Text("Export JSON") }
+                }
+                validationError?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error)
                 }
                 Spacer(Modifier.height(2.dp))
             }
