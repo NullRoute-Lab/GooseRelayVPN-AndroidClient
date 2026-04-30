@@ -10,10 +10,9 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Fake DNS server that returns fake IPs from 198.18.0.0/16 range.
- * Maps hostnames to fake IPs so real hostnames can be resolved at the server.
+ * IMPORTANT: Must bind to 0.0.0.0 (not 10.0.0.1) to receive packets from Android
  */
 class FakeDnsServer(
-    private val listenAddress: String = "10.0.0.1",
     private val listenPort: Int = 53
 ) {
     
@@ -35,14 +34,18 @@ class FakeDnsServer(
         
         Thread {
             try {
-                socket = DatagramSocket(listenPort, InetAddress.getByName(listenAddress))
-                Log.i(TAG, "Fake DNS server started on $listenAddress:$listenPort")
+                // Bind to 0.0.0.0 (all interfaces) to receive packets from VPN interface
+                socket = DatagramSocket(listenPort, InetAddress.getByName("0.0.0.0"))
+                socket?.reuseAddress = true
+                Log.i(TAG, "Fake DNS server started on 0.0.0.0:$listenPort")
                 
                 val buffer = ByteArray(512)
                 while (running) {
                     try {
                         val packet = DatagramPacket(buffer, buffer.size)
                         socket?.receive(packet)
+                        
+                        Log.d(TAG, "Received DNS query from ${packet.address}:${packet.port}")
                         
                         val query = buffer.copyOf(packet.length)
                         val response = processQuery(query)
@@ -53,6 +56,7 @@ class FakeDnsServer(
                                 packet.address, packet.port
                             )
                             socket?.send(responsePacket)
+                            Log.d(TAG, "Sent DNS response to ${packet.address}:${packet.port}")
                         }
                     } catch (e: Exception) {
                         if (running) {
@@ -87,7 +91,7 @@ class FakeDnsServer(
             // Generate or retrieve fake IP
             val fakeIp = getFakeIpForHostname(hostname)
             
-            Log.d(TAG, "DNS query: $hostname -> $fakeIp")
+            Log.i(TAG, "DNS query: $hostname -> $fakeIp")
             
             // Build DNS response
             return buildDnsResponse(query, fakeIp)

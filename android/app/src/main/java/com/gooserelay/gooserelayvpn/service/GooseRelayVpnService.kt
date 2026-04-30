@@ -214,9 +214,9 @@ class GooseRelayVpnService : VpnService() {
                     VpnManager.appendLog("Fake DNS mode enabled")
                     
                     // Start fake DNS server on TUN interface
-                    fakeDnsServer = FakeDnsServer("10.0.0.1", 53)
+                    fakeDnsServer = FakeDnsServer(53)
                     fakeDnsServer?.start()
-                    VpnManager.appendLog("Fake DNS server started on 10.0.0.1:53")
+                    VpnManager.appendLog("Fake DNS server started on 0.0.0.0:53")
                     
                     // Start interceptor proxy that translates fake IPs to real hostnames
                     fakeDnsInterceptor = FakeDnsInterceptor(
@@ -267,6 +267,8 @@ class GooseRelayVpnService : VpnService() {
                 val builder = Builder()
                     .setSession(getString(R.string.app_name))
                     .setMtu(1500)
+                    .setBlocking(false)
+                    .setUnderlyingNetworks(null)
                     .addAddress("10.0.0.2", 32)
                     .addRoute("0.0.0.0", 0)
                 vpnDnsServers.forEach { builder.addDnsServer(it) }
