@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/kianmhz/GooseRelayVPN/mobile/tun"
 	"github.com/kianmhz/GooseRelayVPN/internal/carrier"
 	"github.com/kianmhz/GooseRelayVPN/internal/config"
 	"github.com/kianmhz/GooseRelayVPN/internal/session"
@@ -27,11 +26,13 @@ type Bandwidth struct {
 }
 
 var (
-	mu        sync.Mutex
-	cancelFn  context.CancelFunc
-	socksLn   net.Listener
-	running   bool
-	tunActive bool
+	mu              sync.Mutex
+	cancelFn        context.CancelFunc
+	socksLn         net.Listener
+	running         bool
+	tunActive       bool
+	tunBridgeMu     sync.Mutex
+	activeTunBridge *TunBridge
 )
 
 func StartClient(configPath string, logPath string) error {
@@ -173,42 +174,106 @@ func StopTun() {
 	}
 }
 
-// TUN Bridge functions (wrapper for mobile/tun package)
+// TUN Bridge functions
 
 // StartTunBridge starts the TUN bridge with DNS interception
 func StartTunBridge(tunFd int64, mtu int64, socksAddr string) error {
-	return tun.StartTunBridge(int32(tunFd), int32(mtu), socksAddr)
+	tunBridgeMu.Lock()
+	defer tunBridgeMu.Unlock()
+
+	if activeTunBridge != nil {
+		return fmt.Errorf("TUN bridge already running")
+	}
+
+	if socksAddr == "" {
+		return fmt.Errorf("socksAddr cannot be empty")
+	}
+
+	if tunFd < 0 {
+		return fmt.Errorf("invalid tunFd: %d", tunFd)
+	}
+
+	log.Printf("[API] Starting TUN bridge: fd=%d mtu=%d socks=%s", tunFd, mtu, socksAddr)
+
+	bridge := NewTunBridge(int(tunFd), socksAddr, nil)
+	if err := bridge.Start(); err != nil {
+		return fmt.Errorf("failed to start bridge: %v", err)
+	}
+
+	activeTunBridge = bridge
+	log.Printf("[API] TUN bridge started successfully")
+	return nil
 }
 
 // StopTunBridge stops the TUN bridge
 func StopTunBridge() {
-	tun.StopTunBridge()
+	tunBridgeMu.Lock()
+	defer tunBridgeMu.Unlock()
+
+	if activeTunBridge == nil {
+		return
+	}
+
+	log.Printf("[API] Stopping TUN bridge")
+	activeTunBridge.Stop()
+	activeTunBridge = nil
+	log.Printf("[API] TUN bridge stopped")
 }
 
 // IsTunBridgeRunning returns true if bridge is active
 func IsTunBridgeRunning() bool {
-	return tun.IsTunBridgeRunning()
+	tunBridgeMu.Lock()
+	defer tunBridgeMu.Unlock()
+	return activeTunBridge != nil
 }
 
 // GetTunBandwidth returns upload and download bandwidth statistics
 func GetTunBandwidth() *Bandwidth {
-	up, down := tun.GetTunBandwidth()
+	tunBridgeMu.Lock()
+	defer tunBridgeMu.Unlock()
+
+	if activeTunBridge == nil {
+		return &Bandwidth{Up: 0, Down: 0}
+	}
+
+	up, down := activeTunBridge.GetBandwidth()
 	return &Bandwidth{Up: up, Down: down}
 }
 
 // GetDNSMapping returns the hostname for a fake IP
 func GetDNSMapping(fakeIP string) string {
-	return tun.GetDNSMapping(fakeIP)
+	tunBridgeMu.Lock()
+	defer tunBridgeMu.Unlock()
+
+	if activeTunBridge == nil {
+		return ""
+	}
+
+	hostname, ok := activeTunBridge.dnsMap.GetHostname(fakeIP)
+	if !ok {
+		return ""
+	}
+	return hostname
 }
 
 // GetDNSMappingCount returns the number of DNS mappings
 func GetDNSMappingCount() int {
-	return tun.GetDNSMappingCount()
+	tunBridgeMu.Lock()
+	defer tunBridgeMu.Unlock()
+
+	if activeTunBridge == nil {
+		return 0
+	}
+
+	activeTunBridge.dnsMap.mu.RLock()
+	count := len(activeTunBridge.dnsMap.hostnameToIP)
+	activeTunBridge.dnsMap.mu.RUnlock()
+	return count
 }
 
 // GetTunVersion returns the TUN module version
 func GetTunVersion() string {
-	return tun.GetVersion()
+	return "1.0.0"
 }
 
 type noopResolver struct{}
