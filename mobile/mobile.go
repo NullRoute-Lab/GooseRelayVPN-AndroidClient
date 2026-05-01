@@ -20,6 +20,12 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/engine"
 )
 
+// Bandwidth holds upload and download statistics
+type Bandwidth struct {
+	Up   int64
+	Down int64
+}
+
 var (
 	mu        sync.Mutex
 	cancelFn  context.CancelFunc
@@ -184,9 +190,10 @@ func IsTunBridgeRunning() bool {
 	return tun.IsTunBridgeRunning()
 }
 
-// GetTunBandwidth returns upload and download bytes
-func GetTunBandwidth() (up int64, down int64) {
-	return tun.GetTunBandwidth()
+// GetTunBandwidth returns upload and download bandwidth statistics
+func GetTunBandwidth() *Bandwidth {
+	up, down := tun.GetTunBandwidth()
+	return &Bandwidth{Up: up, Down: down}
 }
 
 // GetDNSMapping returns the hostname for a fake IP
