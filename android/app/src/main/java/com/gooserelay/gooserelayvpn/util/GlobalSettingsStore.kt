@@ -16,7 +16,7 @@ data class GlobalSettings(
     val splitTunnelingEnabled: Boolean = false,
     val splitPackagesCsv: String = "",
     val customDnsServers: String = "",
-    val fakeDnsEnabled: Boolean = false,
+    val fakeDnsEnabled: Boolean = true,
     val internetSharingEnabled: Boolean = false,
     val internetSharingSocksPort: Int = 8090,
     val internetSharingHttpPort: Int = 8091,
