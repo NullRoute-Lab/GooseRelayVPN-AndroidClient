@@ -7,6 +7,12 @@ import (
 	"sync"
 )
 
+// GetVersion returns the TUN module version
+// This is a simple test function to verify gomobile binding works
+func GetVersion() string {
+	return "1.0.0"
+}
+
 var (
 	bridgeMu     sync.Mutex
 	activeBridge *Bridge
