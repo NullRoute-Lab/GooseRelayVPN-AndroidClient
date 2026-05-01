@@ -180,7 +180,7 @@ private fun ProfileEditorDialog(
     var sniCsv by remember { mutableStateOf(profile?.sniJson?.replace("[", "")?.replace("]", "")?.replace("\"", "") ?: "") }
     var scriptKeysText by remember { mutableStateOf(profile?.scriptKeysText ?: "") }
     var tunnelKey by remember { mutableStateOf(profile?.tunnelKey ?: "") }
-    var validationError by remember { mutableStateOf<String?>(null) }
+    var showErrorDialog by remember { mutableStateOf<String?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -194,10 +194,10 @@ private fun ProfileEditorDialog(
             socksUser = root.get("socks_user")?.asString ?: socksUser
             socksPass = root.get("socks_pass")?.asString ?: socksPass
             if ((socksUser.isBlank()) != (socksPass.isBlank())) {
-                validationError = "Import rejected: socks_user and socks_pass must both be set or both be empty (SOCKS5 auth requires both values)."
+                showErrorDialog = "Import rejected: socks_user and socks_pass must both be set or both be empty (SOCKS5 auth requires both values)."
                 return@runCatching
             }
-            validationError = null
+            showErrorDialog = null
             googleHost = root.get("google_host")?.asString ?: googleHost
             sniCsv = when {
                 root.get("sni")?.isJsonArray == true -> root.getAsJsonArray("sni")?.mapNotNull { it.asString }?.joinToString(", ") ?: ""
@@ -237,13 +237,16 @@ private fun ProfileEditorDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             Button(onClick = {
-                validationError = when {
+                val error = when {
                     scriptKeysText.isBlank() -> "Script keys are required"
                     tunnelKey.isBlank() -> "Tunnel key is required"
                     (socksUser.isBlank()) != (socksPass.isBlank()) -> "socks_user and socks_pass must both be set or both be empty"
                     else -> null
                 }
-                if (validationError != null) return@Button
+                if (error != null) {
+                    showErrorDialog = error
+                    return@Button
+                }
                 val sniJson = sniCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
                     .joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")
                 onSave(
@@ -289,14 +292,19 @@ private fun ProfileEditorDialog(
                 OutlinedTextField(value = sniCsv, onValueChange = { sniCsv = it }, label = { Text("sni (comma separated)") })
                 OutlinedTextField(value = scriptKeysText, onValueChange = { scriptKeysText = it }, label = { Text("script_keys (one per line)") }, minLines = 3)
                 OutlinedTextField(value = tunnelKey, onValueChange = { tunnelKey = it }, label = { Text("tunnel_key") })
-                validationError?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, color = MdvColor.Error)
-                }
                 Spacer(Modifier.height(2.dp))
             }
         }
     )
+
+    showErrorDialog?.let { error ->
+        AlertDialog(
+            onDismissRequest = { showErrorDialog = null },
+            confirmButton = { TextButton(onClick = { showErrorDialog = null }) { Text("OK") },
+            title = { Text("Error") },
+            text = { Text(error) }
+        )
+    }
 }
 
 private fun readTextFromUri(context: Context, uri: Uri): String {
