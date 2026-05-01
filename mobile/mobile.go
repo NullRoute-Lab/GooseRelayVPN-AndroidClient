@@ -28,6 +28,12 @@ var (
 	tunActive bool
 )
 
+// Bandwidth holds upload and download counters.
+type Bandwidth struct {
+	Up   int64
+	Down int64
+}
+
 func StartClient(configPath string, logPath string) error {
 	mu.Lock()
 	if running {
@@ -184,9 +190,10 @@ func IsTunBridgeRunning() bool {
 	return tun.IsTunBridgeRunning()
 }
 
-// GetTunBandwidth returns upload and download bytes
-func GetTunBandwidth() (up int64, down int64) {
-	return tun.GetTunBandwidth()
+// GetTunBandwidth returns upload and download bytes.
+func GetTunBandwidth() *Bandwidth {
+	up, down := tun.GetTunBandwidth()
+	return &Bandwidth{Up: up, Down: down}
 }
 
 // GetDNSMapping returns the hostname for a fake IP
