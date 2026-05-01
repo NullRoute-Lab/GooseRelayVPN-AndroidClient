@@ -22,7 +22,6 @@ var (
 //
 // Returns: error if bridge fails to start
 //
-//export StartTunBridge
 func StartTunBridge(tunFd int32, mtu int32, socksAddr string) error {
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
@@ -57,7 +56,6 @@ func StartTunBridge(tunFd int32, mtu int32, socksAddr string) error {
 
 // StopTunBridge stops the TUN bridge
 //
-//export StopTunBridge
 func StopTunBridge() {
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
@@ -74,7 +72,6 @@ func StopTunBridge() {
 
 // IsTunBridgeRunning returns true if bridge is active
 //
-//export IsTunBridgeRunning
 func IsTunBridgeRunning() bool {
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
@@ -83,7 +80,6 @@ func IsTunBridgeRunning() bool {
 
 // GetTunBandwidth returns upload and download bytes
 //
-//export GetTunBandwidth
 func GetTunBandwidth() (up int64, down int64) {
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
@@ -95,23 +91,21 @@ func GetTunBandwidth() (up int64, down int64) {
 	return activeBridge.GetBandwidth()
 }
 
-// SetProtectFunc sets the socket protect function
-// This must be called before StartTunBridge
+// NOTE: SetProtectFunc is not exposed via gomobile because it takes a function parameter
+// which is not supported by gomobile. Socket protection is not critical for this use case
+// since we're only connecting to localhost SOCKS5 proxy.
 //
-//export SetProtectFunc
-func SetProtectFunc(protectFn func(int) bool) {
-	bridgeMu.Lock()
-	defer bridgeMu.Unlock()
-	
-	if activeBridge != nil {
-		activeBridge.protectFn = protectFn
-	}
-}
+// func SetProtectFunc(protectFn func(int) bool) {
+// 	bridgeMu.Lock()
+// 	defer bridgeMu.Unlock()
+// 	if activeBridge != nil {
+// 		activeBridge.protectFn = protectFn
+// 	}
+// }
 
 // GetDNSMapping returns the hostname for a fake IP
 // Returns empty string if not found
 //
-//export GetDNSMapping
 func GetDNSMapping(fakeIP string) string {
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
@@ -130,7 +124,6 @@ func GetDNSMapping(fakeIP string) string {
 
 // GetDNSMappingCount returns the number of DNS mappings
 //
-//export GetDNSMappingCount
 func GetDNSMappingCount() int {
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
