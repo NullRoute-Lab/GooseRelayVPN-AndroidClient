@@ -32,7 +32,7 @@ var (
 	running         bool
 	tunActive       bool
 	tunBridgeMu     sync.Mutex
-	activeTunBridge *TunBridge
+	activeTunBridge *tunBridge
 )
 
 func StartClient(configPath string, logPath string) error {
@@ -195,8 +195,8 @@ func StartTunBridge(tunFd int64, mtu int64, socksAddr string) error {
 
 	log.Printf("[API] Starting TUN bridge: fd=%d mtu=%d socks=%s", tunFd, mtu, socksAddr)
 
-	bridge := NewTunBridge(int(tunFd), socksAddr, nil)
-	if err := bridge.Start(); err != nil {
+	bridge := newTunBridge(int(tunFd), socksAddr, nil)
+	if err := bridge.start(); err != nil {
 		return fmt.Errorf("failed to start bridge: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func StopTunBridge() {
 	}
 
 	log.Printf("[API] Stopping TUN bridge")
-	activeTunBridge.Stop()
+	activeTunBridge.stop()
 	activeTunBridge = nil
 	log.Printf("[API] TUN bridge stopped")
 }
@@ -236,7 +236,7 @@ func GetTunBandwidth() *Bandwidth {
 		return &Bandwidth{Up: 0, Down: 0}
 	}
 
-	up, down := activeTunBridge.GetBandwidth()
+	up, down := activeTunBridge.getBandwidth()
 	return &Bandwidth{Up: up, Down: down}
 }
 

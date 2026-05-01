@@ -36,35 +36,35 @@ var (
 	tunBytesDown atomic.Int64
 )
 
-// TunBridge manages the TUN interface and DNS interception
-type TunBridge struct {
+// tunBridge manages the TUN interface and DNS interception
+type tunBridge struct {
 	tunFd      int
 	socksAddr  string
-	dnsMap     *DNSMapper
-	tcpHandler *TCPHandler
+	dnsMap     *dnsMapper
+	tcpHandler *tcpHandler
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	protectFn  func(fd int) bool
 }
 
-// DNSMapper handles fake DNS mapping
-type DNSMapper struct {
+// dnsMapper handles fake DNS mapping
+type dnsMapper struct {
 	mu           sync.RWMutex
 	hostnameToIP map[string]string
 	ipToHostname map[string]string
 	counter      uint32
 }
 
-func NewDNSMapper() *DNSMapper {
-	return &DNSMapper{
+func newDNSMapper() *dnsMapper {
+	return &dnsMapper{
 		hostnameToIP: make(map[string]string),
 		ipToHostname: make(map[string]string),
 		counter:      1,
 	}
 }
 
-func (d *DNSMapper) GetFakeIP(hostname string) string {
+func (d *dnsMapper) getFakeIP(hostname string) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -90,20 +90,20 @@ func (d *DNSMapper) GetFakeIP(hostname string) string {
 	return fakeIP
 }
 
-func (d *DNSMapper) GetHostname(fakeIP string) (string, bool) {
+func (d *dnsMapper) getHostname(fakeIP string) (string, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	hostname, ok := d.ipToHostname[fakeIP]
 	return hostname, ok
 }
 
-// NewTunBridge creates a new TUN bridge
-func NewTunBridge(tunFd int, socksAddr string, protectFn func(int) bool) *TunBridge {
+// newTunBridge creates a new TUN bridge
+func newTunBridge(tunFd int, socksAddr string, protectFn func(int) bool) *tunBridge {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &TunBridge{
+	return &tunBridge{
 		tunFd:      tunFd,
 		socksAddr:  socksAddr,
-		dnsMap:     NewDNSMapper(),
+		dnsMap:     newDNSMapper(),
 		tcpHandler: nil,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -111,15 +111,15 @@ func NewTunBridge(tunFd int, socksAddr string, protectFn func(int) bool) *TunBri
 	}
 }
 
-// Start starts the TUN bridge
-func (b *TunBridge) Start() error {
+// start starts the TUN bridge
+func (b *tunBridge) start() error {
 	log.Printf("[TUN-BRIDGE] Starting bridge: tunFd=%d socksAddr=%s", b.tunFd, b.socksAddr)
 
 	tunBytesUp.Store(0)
 	tunBytesDown.Store(0)
 
 	// Create TCP handler
-	b.tcpHandler = NewTCPHandler(b, b.socksAddr)
+	b.tcpHandler = newTCPHandler(b, b.socksAddr)
 	log.Printf("[TUN-BRIDGE] TCP handler created")
 
 	// Start packet processing
@@ -129,25 +129,25 @@ func (b *TunBridge) Start() error {
 	return nil
 }
 
-// Stop stops the TUN bridge
-func (b *TunBridge) Stop() {
+// stop stops the TUN bridge
+func (b *tunBridge) stop() {
 	log.Printf("[TUN-BRIDGE] Stopping bridge")
 	b.cancel()
 
 	if b.tcpHandler != nil {
-		b.tcpHandler.Close()
+		b.tcpHandler.close()
 	}
 
 	b.wg.Wait()
 }
 
-// GetBandwidth returns upload and download bytes
-func (b *TunBridge) GetBandwidth() (up, down int64) {
+// getBandwidth returns upload and download bytes
+func (b *tunBridge) getBandwidth() (up, down int64) {
 	return tunBytesUp.Load(), tunBytesDown.Load()
 }
 
 // processPackets reads packets from TUN and handles them
-func (b *TunBridge) processPackets() {
+func (b *tunBridge) processPackets() {
 	defer b.wg.Done()
 
 	tunFile := &tunFile{fd: b.tunFd}
@@ -183,7 +183,7 @@ func (b *TunBridge) processPackets() {
 }
 
 // handlePacket processes a single IP packet
-func (b *TunBridge) handlePacket(packet []byte) {
+func (b *tunBridge) handlePacket(packet []byte) {
 	if len(packet) < 20 {
 		return
 	}
@@ -210,13 +210,13 @@ func (b *TunBridge) handlePacket(packet []byte) {
 
 	// Handle TCP
 	if protocol == 6 { // TCP
-		b.tcpHandler.HandleTCP(packet, srcIP, dstIP)
+		b.tcpHandler.handleTCP(packet, srcIP, dstIP)
 		return
 	}
 }
 
 // handleUDP handles UDP packets (mainly DNS)
-func (b *TunBridge) handleUDP(packet []byte, srcIP, dstIP net.IP) {
+func (b *tunBridge) handleUDP(packet []byte, srcIP, dstIP net.IP) {
 	if len(packet) < 28 { // IP header (20) + UDP header (8)
 		return
 	}
@@ -237,7 +237,7 @@ func (b *TunBridge) handleUDP(packet []byte, srcIP, dstIP net.IP) {
 }
 
 // handleDNS handles DNS queries
-func (b *TunBridge) handleDNS(packet []byte, srcIP net.IP, srcPort uint16) {
+func (b *tunBridge) handleDNS(packet []byte, srcIP net.IP, srcPort uint16) {
 	if len(packet) < 28 {
 		return
 	}
@@ -252,7 +252,7 @@ func (b *TunBridge) handleDNS(packet []byte, srcIP net.IP, srcPort uint16) {
 	}
 
 	// Get fake IP for hostname
-	fakeIP := b.dnsMap.GetFakeIP(hostname)
+	fakeIP := b.dnsMap.getFakeIP(hostname)
 
 	// Build DNS response
 	response := b.buildDNSResponse(dnsQuery, fakeIP)
@@ -265,7 +265,7 @@ func (b *TunBridge) handleDNS(packet []byte, srcIP net.IP, srcPort uint16) {
 }
 
 // parseDNSQuery extracts hostname from DNS query
-func (b *TunBridge) parseDNSQuery(query []byte) string {
+func (b *tunBridge) parseDNSQuery(query []byte) string {
 	if len(query) < 12 {
 		return ""
 	}
@@ -304,7 +304,7 @@ func (b *TunBridge) parseDNSQuery(query []byte) string {
 }
 
 // buildDNSResponse builds a DNS response for a hostname
-func (b *TunBridge) buildDNSResponse(query []byte, ip string) []byte {
+func (b *tunBridge) buildDNSResponse(query []byte, ip string) []byte {
 	if len(query) < 12 {
 		return nil
 	}
@@ -354,7 +354,7 @@ func (b *TunBridge) buildDNSResponse(query []byte, ip string) []byte {
 }
 
 // sendDNSResponse sends a DNS response back to the client
-func (b *TunBridge) sendDNSResponse(originalPacket []byte, clientIP net.IP, clientPort uint16, dnsResponse []byte) {
+func (b *tunBridge) sendDNSResponse(originalPacket []byte, clientIP net.IP, clientPort uint16, dnsResponse []byte) {
 	if len(originalPacket) < 20 {
 		return
 	}
@@ -410,55 +410,55 @@ func (t *tunFile) Write(p []byte) (n int, err error) {
 	return
 }
 
-// TCPHandler manages TCP connections through SOCKS5
-type TCPHandler struct {
-	bridge    *TunBridge
+// tcpHandler manages TCP connections through SOCKS5
+type tcpHandler struct {
+	bridge    *tunBridge
 	mu        sync.RWMutex
-	sessions  map[string]*TCPSession
+	sessions  map[string]*tcpSession
 	socksAddr string
 }
 
-// TCPSession represents a TCP connection
-type TCPSession struct {
+// tcpSession represents a TCP connection
+type tcpSession struct {
 	id         string
 	srcIP      net.IP
 	srcPort    uint16
 	dstIP      net.IP
 	dstPort    uint16
 	socksConn  net.Conn
-	state      TCPState
+	state      tcpState
 	seqNum     uint32
 	ackNum     uint32
 	lastActive time.Time
 	mu         sync.Mutex
 }
 
-type TCPState int
+type tcpState int
 
 const (
-	TCPStateClosed TCPState = iota
-	TCPStateSynSent
-	TCPStateSynReceived
-	TCPStateEstablished
-	TCPStateFinWait1
-	TCPStateFinWait2
-	TCPStateClosing
-	TCPStateTimeWait
-	TCPStateCloseWait
-	TCPStateLastAck
+	tcpStateClosed tcpState = iota
+	tcpStateSynSent
+	tcpStateSynReceived
+	tcpStateEstablished
+	tcpStateFinWait1
+	tcpStateFinWait2
+	tcpStateClosing
+	tcpStateTimeWait
+	tcpStateCloseWait
+	tcpStateLastAck
 )
 
-// NewTCPHandler creates a new TCP handler
-func NewTCPHandler(bridge *TunBridge, socksAddr string) *TCPHandler {
-	return &TCPHandler{
+// newTCPHandler creates a new TCP handler
+func newTCPHandler(bridge *tunBridge, socksAddr string) *tcpHandler {
+	return &tcpHandler{
 		bridge:    bridge,
-		sessions:  make(map[string]*TCPSession),
+		sessions:  make(map[string]*tcpSession),
 		socksAddr: socksAddr,
 	}
 }
 
-// HandleTCP handles TCP packets
-func (h *TCPHandler) HandleTCP(packet []byte, srcIP, dstIP net.IP) {
+// handleTCP handles TCP packets
+func (h *tcpHandler) handleTCP(packet []byte, srcIP, dstIP net.IP) {
 	if len(packet) < 40 { // IP header (20) + TCP header (20)
 		return
 	}
@@ -472,7 +472,7 @@ func (h *TCPHandler) HandleTCP(packet []byte, srcIP, dstIP net.IP) {
 	hostname := ""
 	if dstIP.To4() != nil {
 		ipStr := dstIP.String()
-		if h, ok := h.bridge.dnsMap.GetHostname(ipStr); ok {
+		if h, ok := h.bridge.dnsMap.getHostname(ipStr); ok {
 			hostname = h
 		}
 	}
@@ -483,8 +483,8 @@ func (h *TCPHandler) HandleTCP(packet []byte, srcIP, dstIP net.IP) {
 	}
 }
 
-// Close closes the TCP handler
-func (h *TCPHandler) Close() {
+// close closes the TCP handler
+func (h *tcpHandler) close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, session := range h.sessions {
@@ -492,7 +492,7 @@ func (h *TCPHandler) Close() {
 			_ = session.socksConn.Close()
 		}
 	}
-	h.sessions = make(map[string]*TCPSession)
+	h.sessions = make(map[string]*tcpSession)
 }
 
 // Protect protects a socket file descriptor from VPN routing
