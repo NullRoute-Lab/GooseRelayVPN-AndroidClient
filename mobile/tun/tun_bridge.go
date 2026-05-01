@@ -1,5 +1,3 @@
-//go:build android
-
 // Package tun provides TUN interface handling with DNS interception
 // This is a separate module that doesn't modify the original Go code
 package tun

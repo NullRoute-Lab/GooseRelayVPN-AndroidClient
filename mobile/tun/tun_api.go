@@ -1,5 +1,3 @@
-//go:build android
-
 // Package tun provides gomobile-compatible API for TUN bridge
 package tun
 
