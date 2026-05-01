@@ -82,7 +82,6 @@ func (h *TCPHandler) HandleTCP(packet []byte, srcIP, dstIP net.IP) {
 	flagFIN := (flags & 0x01) != 0
 	flagSYN := (flags & 0x02) != 0
 	flagRST := (flags & 0x04) != 0
-	flagPSH := (flags & 0x08) != 0
 	flagACK := (flags & 0x10) != 0
 	
 	// Get payload

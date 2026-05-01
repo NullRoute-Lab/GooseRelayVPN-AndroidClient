@@ -1,9 +1,6 @@
 package tun
 
-import (
-	"syscall"
-	"unsafe"
-)
+import "syscall"
 
 // Read reads from TUN file descriptor
 func (t *tunFile) Read(p []byte) (n int, err error) {
@@ -32,19 +29,5 @@ func SetNonblock(fd int, nonblocking bool) error {
 
 // GetSockOpt gets socket option
 func GetSockOpt(fd, level, opt int) (int, error) {
-	var value int
-	vallen := uint32(unsafe.Sizeof(value))
-	_, _, errno := syscall.Syscall6(
-		syscall.SYS_GETSOCKOPT,
-		uintptr(fd),
-		uintptr(level),
-		uintptr(opt),
-		uintptr(unsafe.Pointer(&value)),
-		uintptr(unsafe.Pointer(&vallen)),
-		0,
-	)
-	if errno != 0 {
-		return 0, errno
-	}
-	return value, nil
+	return syscall.GetsockoptInt(fd, level, opt)
 }
