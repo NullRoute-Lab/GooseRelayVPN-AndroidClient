@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/kianmhz/GooseRelayVPN/mobile/tun"
 	"github.com/kianmhz/GooseRelayVPN/internal/carrier"
