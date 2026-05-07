@@ -205,7 +205,7 @@ object VpnManager {
         val accounts = Regex("accounts=\\[(.+)\\]", RegexOption.IGNORE_CASE).find(line)
         val accountStats = accounts?.groupValues?.getOrNull(1)?.trim() ?: ""
 
-        if (active != null && (bytesOut.isNotBlank() || sessionsOpen > 0 || accountStats.isNotBlank())) {
+        if ((active != null && (bytesOut.isNotBlank() || sessionsOpen > 0)) || accountStats.isNotBlank()) {
             _scanStatus.value = _scanStatus.value.copy(
                 statsActive = active,
                 statsSessionsOpen = sessionsOpen,
