@@ -107,8 +107,12 @@ func StartClient(configPath string, logPath string) error {
 	)
 
 	if cfg.SocksUser != "" && cfg.SocksPass != "" {
-		serverOpts = append(serverOpts, socks5.WithAuthenticator(func(user, pass string) bool {
-			return user == cfg.SocksUser && pass == cfg.SocksPass
+		serverOpts = append(serverOpts, socks5.WithAuthMethods([]socks5.Authenticator{
+			socks5.UserPassAuthenticator{
+				Credentials: socks5.StaticCredentials{
+					cfg.SocksUser: cfg.SocksPass,
+				},
+			},
 		}))
 		log.Printf("[socks] authentication enabled: user=%s", cfg.SocksUser)
 	}
