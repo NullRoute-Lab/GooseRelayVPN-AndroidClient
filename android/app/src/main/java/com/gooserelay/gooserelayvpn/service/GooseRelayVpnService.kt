@@ -256,9 +256,11 @@ class GooseRelayVpnService : VpnService() {
                 configDir.mkdirs()
 
                 val configFile = File(configDir, "client_config.json")
-                configFile.writeText(ConfigGenerator.generateConfig(profile))
+                val generatedConfig = ConfigGenerator.generateConfig(profile)
+                configFile.writeText(generatedConfig)
 
                 VpnManager.appendLog("Config written to: ${configFile.absolutePath}")
+                VpnManager.appendLog("DEBUG: Generated config: $generatedConfig")
                 VpnManager.appendLog("Starting Go core...")
 
                 // Start Go client in background thread

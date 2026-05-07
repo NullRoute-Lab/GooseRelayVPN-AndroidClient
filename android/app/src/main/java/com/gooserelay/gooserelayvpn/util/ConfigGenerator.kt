@@ -1,5 +1,6 @@
 package com.gooserelay.gooserelayvpn.util
 
+import android.util.Log
 import com.gooserelay.gooserelayvpn.data.local.ProfileEntity
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -27,7 +28,9 @@ object ConfigGenerator {
                 addProperty("idle_slots_per_bucket", profile.idleSlotsPerBucket)
             }
         }
-        return gson.toJson(root)
+        val json = gson.toJson(root)
+        Log.d("ConfigGenerator", "Generated full config: $json")
+        return json
     }
 
     fun exportProfileJson(profile: ProfileEntity): String = generateConfig(profile)
@@ -46,6 +49,7 @@ object ConfigGenerator {
     private fun parseScriptKeys(text: String): JsonArray {
         val keys = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val result = JsonArray()
+        Log.d("ConfigGenerator", "Parsing script keys: $keys")
         for (key in keys) {
             val trimmed = key.trim()
             if (trimmed.isEmpty()) continue
@@ -55,6 +59,7 @@ object ConfigGenerator {
                 if (parts.size >= 2) {
                     obj.addProperty("id", parts[0].trim())
                     obj.addProperty("account", parts[1].trim())
+                    Log.d("ConfigGenerator", "Added script key with account: id=${parts[0].trim()}, account=${parts[1].trim()}")
                 } else {
                     obj.addProperty("id", trimmed)
                 }
@@ -63,6 +68,7 @@ object ConfigGenerator {
             }
             result.add(obj)
         }
+        Log.d("ConfigGenerator", "Final script keys JSON: ${gson.toJson(result)}")
         return result
     }
 }

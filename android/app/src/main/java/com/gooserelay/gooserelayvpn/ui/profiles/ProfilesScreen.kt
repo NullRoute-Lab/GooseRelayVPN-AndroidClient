@@ -2,6 +2,7 @@ package com.gooserelay.gooserelayvpn.ui.profiles
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -86,11 +87,13 @@ fun parseScriptKeysText(text: String): List<ScriptKeyEntry> {
 }
 
 fun scriptKeysToText(entries: List<ScriptKeyEntry>): String {
-    return entries
+    val result = entries
         .filter { it.id.isNotBlank() }
         .joinToString("\n") { entry ->
             if (entry.account.isNotBlank()) "${entry.id}|${entry.account}" else entry.id
         }
+    Log.d("ProfilesScreen", "scriptKeysToText converted entries to: $result")
+    return result
 }
 
 @Composable
@@ -262,6 +265,7 @@ private fun ProfileEditorDialog(
                 else -> ""
             }
             scriptKeysText = keys
+            Log.d("ProfilesScreen", "Imported script keys text: $keys")
             scriptKeyEntries = parseScriptKeysText(keys)
             coalesceStepMs = (root.get("coalesce_step_ms")?.asInt ?: 0).toString()
             idleSlotsPerBucket = (root.get("idle_slots_per_bucket")?.asInt?.coerceIn(1, 3) ?: 1).toString()
@@ -307,6 +311,8 @@ private fun ProfileEditorDialog(
                 }
                 val sniJson = sniCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
                     .joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")
+                val scriptKeysForSave = scriptKeysToText(scriptKeyEntries)
+                Log.d("ProfilesScreen", "Saving profile with scriptKeysText: $scriptKeysForSave")
                 onSave(
                     ProfileEntity(
                         id = profile?.id ?: 0,
@@ -318,7 +324,7 @@ private fun ProfileEditorDialog(
                         socksPass = socksPass,
                         googleHost = googleHost,
                         sniJson = sniJson,
-                        scriptKeysText = scriptKeysToText(scriptKeyEntries),
+                        scriptKeysText = scriptKeysForSave,
                         tunnelKey = tunnelKey,
                         coalesceStepMs = coalesceStepMs.toIntOrNull() ?: 0,
                         idleSlotsPerBucket = idleSlotsPerBucket.toIntOrNull()?.coerceIn(1, 3) ?: 1,
