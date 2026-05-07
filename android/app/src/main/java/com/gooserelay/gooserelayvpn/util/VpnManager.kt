@@ -207,7 +207,7 @@ object VpnManager {
 
         if ((active != null && (bytesOut.isNotBlank() || sessionsOpen > 0)) || accountStats.isNotBlank()) {
             _scanStatus.value = _scanStatus.value.copy(
-                statsActive = active,
+                statsActive = active ?: 0,
                 statsSessionsOpen = sessionsOpen,
                 statsSessionsClose = sessionsClose,
                 statsBytesOut = bytesOut,
