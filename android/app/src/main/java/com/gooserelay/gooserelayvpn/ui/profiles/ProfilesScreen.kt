@@ -228,7 +228,7 @@ private fun ProfileEditorDialog(
     var googleHost by remember { mutableStateOf(profile?.googleHost ?: "216.239.38.120") }
     var sniCsv by remember { mutableStateOf(profile?.sniJson?.replace("[", "")?.replace("]", "")?.replace("\"", "") ?: "www.google.com, mail.google.com, accounts.google.com") }
     var scriptKeysText by remember { mutableStateOf(profile?.scriptKeysText ?: "") }
-    var scriptKeyEntries by remember { mutableStateOf(parseScriptKeysText(profile?.scriptKeysText ?: "")) }
+    var scriptKeyEntries by remember { mutableStateOf(parseScriptKeysText(profile?.scriptKeysText ?: "").ifEmpty { listOf(ScriptKeyEntry()) }) }
     var tunnelKey by remember { mutableStateOf(profile?.tunnelKey ?: "") }
     var coalesceStepMs by remember { mutableStateOf((profile?.coalesceStepMs ?: 0).toString()) }
     var idleSlotsPerBucket by remember { mutableStateOf((profile?.idleSlotsPerBucket ?: 1).toString()) }
@@ -399,10 +399,8 @@ private fun ProfileEditorDialog(
                     onEntriesChanged = { scriptKeyEntries = it }
                 )
                 OutlinedTextField(value = tunnelKey, onValueChange = { tunnelKey = it }, label = { Text("tunnel_key") })
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = coalesceStepMs, onValueChange = { coalesceStepMs = it.filter(Char::isDigit) }, label = { Text("coalesce_step_ms (0-40)") }, modifier = Modifier.weight(1f), singleLine = true)
-                    OutlinedTextField(value = idleSlotsPerBucket, onValueChange = { idleSlotsPerBucket = it.filter(Char::isDigit) }, label = { Text("idle_slots (1-3)") }, modifier = Modifier.weight(1f), singleLine = true)
-                }
+                OutlinedTextField(value = coalesceStepMs, onValueChange = { coalesceStepMs = it.filter(Char::isDigit) }, label = { Text("coalesce_step_ms") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(value = idleSlotsPerBucket, onValueChange = { idleSlotsPerBucket = it.filter(Char::isDigit) }, label = { Text("idle_slots (1-3)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Spacer(Modifier.height(2.dp))
             }
         }
@@ -440,45 +438,54 @@ private fun ScriptKeysEditor(
         )
 
         entries.forEachIndexed { index, entry ->
-            Row(
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                colors = CardDefaults.cardColors(containerColor = MdvColor.SurfaceLow)
             ) {
-                OutlinedTextField(
-                    value = entry.id,
-                    onValueChange = { newId ->
-                        val newEntries = entries.toMutableList()
-                        newEntries[index] = entry.copy(id = newId)
-                        onEntriesChanged(newEntries)
-                    },
-                    label = { Text("Deployment ID") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = entry.account,
-                    onValueChange = { newAccount ->
-                        val newEntries = entries.toMutableList()
-                        newEntries[index] = entry.copy(account = newAccount)
-                        onEntriesChanged(newEntries)
-                    },
-                    label = { Text("Account") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                IconButton(
-                    onClick = {
-                        val newEntries = entries.toMutableList()
-                        newEntries.removeAt(index)
-                        onEntriesChanged(newEntries)
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(4.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MdvColor.Error
-                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(0.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = entry.id,
+                            onValueChange = { newId ->
+                                val newEntries = entries.toMutableList()
+                                newEntries[index] = entry.copy(id = newId)
+                                onEntriesChanged(newEntries)
+                            },
+                            label = { Text("Deployment ID") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = entry.account,
+                            onValueChange = { newAccount ->
+                                val newEntries = entries.toMutableList()
+                                newEntries[index] = entry.copy(account = newAccount)
+                                onEntriesChanged(newEntries)
+                            },
+                            label = { Text("Account") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            val newEntries = entries.toMutableList()
+                            newEntries.removeAt(index)
+                            onEntriesChanged(newEntries)
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = MdvColor.Error
+                        )
+                    }
                 }
             }
         }
