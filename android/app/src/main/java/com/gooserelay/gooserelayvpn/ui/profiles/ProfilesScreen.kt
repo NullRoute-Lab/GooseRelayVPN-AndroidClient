@@ -33,6 +33,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -212,6 +216,7 @@ fun ProfilesScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProfileEditorDialog(
     context: Context,
@@ -388,7 +393,33 @@ private fun ProfileEditorDialog(
                     Text("Debug Timing")
                     Switch(checked = debugTiming, onCheckedChange = { debugTiming = it })
                 }
-                OutlinedTextField(value = socksHost, onValueChange = { socksHost = it }, label = { Text("socks_host") })
+                var socksHostExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = socksHostExpanded,
+                    onExpandedChange = { socksHostExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = socksHost,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("socks_host") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = socksHostExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = socksHostExpanded,
+                        onDismissRequest = { socksHostExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("127.0.0.1 (localhost only)") },
+                            onClick = { socksHost = "127.0.0.1"; socksHostExpanded = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("0.0.0.0 (all interfaces)") },
+                            onClick = { socksHost = "0.0.0.0"; socksHostExpanded = false }
+                        )
+                    }
+                }
                 OutlinedTextField(value = socksPort, onValueChange = { socksPort = it.filter(Char::isDigit) }, label = { Text("socks_port") })
                 OutlinedTextField(value = socksUser, onValueChange = { socksUser = it }, label = { Text("socks_user") })
                 OutlinedTextField(value = socksPass, onValueChange = { socksPass = it }, label = { Text("socks_pass") })

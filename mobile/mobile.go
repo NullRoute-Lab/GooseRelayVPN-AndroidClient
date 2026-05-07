@@ -92,7 +92,8 @@ func StartClient(configPath string, logPath string) error {
 		return carr.NewSession(target)
 	})
 
-	server := socks5.NewServer(
+	var serverOpts []socks5.Option
+	serverOpts = append(serverOpts,
 		socks5.WithDial(func(_ context.Context, _, addr string) (net.Conn, error) {
 			s := factory(addr)
 			log.Printf("[socks] new session %x for %s", s.ID[:4], addr)
@@ -104,6 +105,15 @@ func StartClient(configPath string, logPath string) error {
 		}),
 		socks5.WithResolver(noopResolver{}),
 	)
+
+	if cfg.SocksUser != "" && cfg.SocksPass != "" {
+		serverOpts = append(serverOpts, socks5.WithAuthenticator(func(user, pass string) bool {
+			return user == cfg.SocksUser && pass == cfg.SocksPass
+		}))
+		log.Printf("[socks] authentication enabled: user=%s", cfg.SocksUser)
+	}
+
+	server := socks5.NewServer(serverOpts...)
 
 	ln, lerr := net.Listen("tcp", cfg.ListenAddr)
 	if lerr != nil {
