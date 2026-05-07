@@ -59,9 +59,13 @@ func StartClient(configPath string, logPath string) error {
 	}
 
 	carr, err := carrier.New(carrier.Config{
-		ScriptURLs:  cfg.ScriptURLs,
-		AESKeyHex:   cfg.AESKeyHex,
-		DebugTiming: cfg.DebugTiming,
+		ScriptURLs:       cfg.ScriptURLs,
+		ScriptAccounts:   cfg.ScriptAccounts,
+		AESKeyHex:        cfg.AESKeyHex,
+		DebugTiming:      cfg.DebugTiming,
+		CoalesceStep:     time.Duration(cfg.CoalesceStepMs) * time.Millisecond,
+		CoalesceMax:      time.Duration(cfg.CoalesceMaxMs) * time.Millisecond,
+		IdleSlotsPerBucket: cfg.IdleSlotsPerBucket,
 		Fronting: carrier.FrontingConfig{
 			GoogleIP: cfg.GoogleIP,
 			SNIHosts: cfg.SNIHosts,
