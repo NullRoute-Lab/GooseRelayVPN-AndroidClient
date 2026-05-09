@@ -211,16 +211,16 @@ object VpnManager {
         val accounts = Regex("accounts=\\[(.+)\\]", RegexOption.IGNORE_CASE).find(line)
         val accountStats = accounts?.groupValues?.getOrNull(1)?.trim() ?: ""
 
-        if ((active != null && (bytesOut.isNotBlank() || sessionsOpen > 0)) || accountStats.isNotBlank()) {
+        if ((active != null && (bytesOut.isNotBlank() || sessionsOpen > 0)) || (accounts != null && accountStats.isNotBlank())) {
             _scanStatus.value = _scanStatus.value.copy(
-                statsActive = active ?: 0,
-                statsSessionsOpen = sessionsOpen,
-                statsSessionsClose = sessionsClose,
-                statsBytesOut = bytesOut,
-                statsBytesIn = bytesIn,
-                statsPollsOk = pollsOk,
-                statsPollsFail = pollsFail,
-                accountStats = accountStats,
+                statsActive = active ?: _scanStatus.value.statsActive,
+                statsSessionsOpen = if (sessions != null) sessionsOpen else _scanStatus.value.statsSessionsOpen,
+                statsSessionsClose = if (sessions != null) sessionsClose else _scanStatus.value.statsSessionsClose,
+                statsBytesOut = if (bytes != null) bytesOut else _scanStatus.value.statsBytesOut,
+                statsBytesIn = if (bytes != null) bytesIn else _scanStatus.value.statsBytesIn,
+                statsPollsOk = if (polls != null) pollsOk else _scanStatus.value.statsPollsOk,
+                statsPollsFail = if (polls != null) pollsFail else _scanStatus.value.statsPollsFail,
+                accountStats = if (accounts != null) accountStats else _scanStatus.value.accountStats,
                 hasStats = true
             )
         }

@@ -93,10 +93,9 @@ fun MdvConnectionTelemetryCard(
                         )
                         if (scanStatus.accountStats.isNotBlank()) {
                             Text(
-                                text = "Accounts: ${scanStatus.accountStats}",
+                                text = "Accounts:\n${scanStatus.accountStats.replace(" | ", "\n")}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MdvColor.OnSurfaceVariant,
-                                maxLines = 2
+                                color = MdvColor.OnSurfaceVariant
                             )
                         }
                     }
