@@ -74,7 +74,7 @@ import com.gooserelay.gooserelayvpn.ui.theme.MdvSpace
 import com.gooserelay.gooserelayvpn.util.GlobalSettings
 import com.gooserelay.gooserelayvpn.util.SplitTunnelMode
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.height
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -624,9 +624,10 @@ private fun AppRow(
             modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (appIconBitmap != null) {
+            val bitmap = appIconBitmap
+            if (bitmap != null) {
                 Image(
-                    bitmap = appIconBitmap.asImageBitmap(),
+                    bitmap = bitmap.asImageBitmap(),
                     contentDescription = null,
                     modifier = Modifier.size(24.dp)
                 )
