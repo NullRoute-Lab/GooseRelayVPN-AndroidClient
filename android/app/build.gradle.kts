@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.gooserelay.gooserelayvpn"
-    compileSdk = 35
+    compileSdk = 36
     val appVersionName = System.getenv("ANDROID_VERSION_NAME")
         ?.takeIf { it.isNotBlank() }
         ?: "1.0.0"
@@ -19,7 +19,7 @@ android {
     defaultConfig {
         applicationId = "com.gooserelay.gooserelayvpn"
         minSdk = 21
-        targetSdk = 35
+        targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
 
@@ -87,7 +87,7 @@ android {
             // CI debug upload selects only universal; release workflow uploads all.
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86")
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
             isUniversalApk = true
         }
     }
