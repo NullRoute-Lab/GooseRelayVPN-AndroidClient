@@ -11,12 +11,14 @@ import com.gooserelay.gooserelayvpn.ui.theme.MdvColor
 fun MdvFilterChip(
     selected: Boolean,
     label: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label) },
+        modifier = modifier,
         colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = MdvColor.PrimaryContainer.copy(alpha = 0.16f),
             selectedLabelColor = MdvColor.Primary,
