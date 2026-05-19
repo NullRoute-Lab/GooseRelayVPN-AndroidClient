@@ -73,6 +73,46 @@ object VpnManager {
     private const val MAX_LOG_LINES = 2000
     private val stampRegex = Regex("^\\d{4}[-/]\\d{2}[-/]\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}")
 
+    private val STATS_ACTIVE_REGEX = Regex("active=(\\d+)", RegexOption.IGNORE_CASE)
+    private val STATS_SESSIONS_REGEX = Regex("sessions=(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
+    private val STATS_BYTES_REGEX = Regex("bytes=([^/\\s]+)/([^\\s]+)", RegexOption.IGNORE_CASE)
+    private val STATS_POLLS_REGEX = Regex("polls=(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
+    private val STATS_ACCOUNTS_REGEX = Regex("accounts=\\[(.+)\\]", RegexOption.IGNORE_CASE)
+
+    private data class TimestampCandidate(
+        val regex: Regex,
+        val inputPattern: String,
+        val outputPattern: String
+    )
+
+    private val TIMESTAMP_CANDIDATES = listOf(
+        TimestampCandidate(
+            Regex("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)(.*)$"),
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd HH:mm:ss.SSS"
+        ),
+        TimestampCandidate(
+            Regex("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z)(.*)$"),
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd HH:mm:ss"
+        ),
+        TimestampCandidate(
+            Regex("^(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\s+UTC(.*)$"),
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss"
+        ),
+        TimestampCandidate(
+            Regex("^(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\s(.*)$"),
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss"
+        ),
+        TimestampCandidate(
+            Regex("^(\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}:\\d{2})(.*)$"),
+            "yyyy/MM/dd HH:mm:ss",
+            "yyyy/MM/dd HH:mm:ss"
+        )
+    )
+
     fun updateState(newState: VpnState) {
         _state.value = newState
     }
@@ -192,23 +232,23 @@ object VpnManager {
 
     private fun parseScanLine(line: String) {
         // New format: [stats] active=8 sessions=70/62 frames=259/365 bytes=13.8MB/883.5KB polls=404/0 rst=1 endpoints=3/3
-        val active = Regex("active=(\\d+)", RegexOption.IGNORE_CASE).find(line)
+        val active = STATS_ACTIVE_REGEX.find(line)
             ?.groupValues?.getOrNull(1)?.toIntOrNull()
 
-        val sessions = Regex("sessions=(\\d+)/(\\d+)", RegexOption.IGNORE_CASE).find(line)
+        val sessions = STATS_SESSIONS_REGEX.find(line)
         val sessionsOpen = sessions?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
         val sessionsClose = sessions?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
 
-        val bytes = Regex("bytes=([^/\\s]+)/([^\\s]+)", RegexOption.IGNORE_CASE).find(line)
+        val bytes = STATS_BYTES_REGEX.find(line)
         val bytesOut = bytes?.groupValues?.getOrNull(1) ?: ""
         val bytesIn = bytes?.groupValues?.getOrNull(2) ?: ""
 
-        val polls = Regex("polls=(\\d+)/(\\d+)", RegexOption.IGNORE_CASE).find(line)
+        val polls = STATS_POLLS_REGEX.find(line)
         val pollsOk = polls?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
         val pollsFail = polls?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
 
         // Accounts format: accounts=[air today=259 script=514 | mr4 today=258 script=506 | mr6 today=258 script=515]
-        val accounts = Regex("accounts=\\[(.+)\\]", RegexOption.IGNORE_CASE).find(line)
+        val accounts = STATS_ACCOUNTS_REGEX.find(line)
         val accountStats = accounts?.groupValues?.getOrNull(1)?.trim() ?: ""
 
         if ((active != null && (bytesOut.isNotBlank() || sessionsOpen > 0)) || (accounts != null && accountStats.isNotBlank())) {
@@ -227,44 +267,11 @@ object VpnManager {
     }
 
     private fun normalizeLogTimestampToLocal(line: String): String {
-        val candidates = listOf(
-            // Example: 2026-04-05T10:20:30.123Z
-            Triple(
-                Regex("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)(.*)$"),
-                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                "yyyy-MM-dd HH:mm:ss.SSS"
-            ),
-            // Example: 2026-04-05T10:20:30Z
-            Triple(
-                Regex("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z)(.*)$"),
-                "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                "yyyy-MM-dd HH:mm:ss"
-            ),
-            // Example: 2026-04-05 10:20:30 UTC (check UTC variant first)
-            Triple(
-                Regex("^(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\s+UTC(.*)$"),
-                "yyyy-MM-dd HH:mm:ss",
-                "yyyy-MM-dd HH:mm:ss"
-            ),
-            // Example: 2026-04-05 10:20:30 (from mtu_logging.go, no UTC)
-            Triple(
-                Regex("^(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\s(.*)$"),
-                "yyyy-MM-dd HH:mm:ss",
-                "yyyy-MM-dd HH:mm:ss"
-            ),
-            // Example: 2026/04/05 10:20:30 (from logger.go)
-            Triple(
-                Regex("^(\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}:\\d{2})(.*)$"),
-                "yyyy/MM/dd HH:mm:ss",
-                "yyyy/MM/dd HH:mm:ss"
-            )
-        )
-
-        for ((regex, inputFormat, outputFormat) in candidates) {
-            val match = regex.find(line) ?: continue
+        for (candidate in TIMESTAMP_CANDIDATES) {
+            val match = candidate.regex.find(line) ?: continue
             val utcStamp = match.groupValues[1]
             val suffix = match.groupValues[2]
-            val localStamp = convertUtcToLocal(utcStamp, inputFormat, outputFormat) ?: continue
+            val localStamp = convertUtcToLocal(utcStamp, candidate.inputPattern, candidate.outputPattern) ?: continue
             return "$localStamp$suffix"
         }
         return line
