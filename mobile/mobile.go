@@ -33,6 +33,44 @@ var (
 	engineMu         sync.Mutex // Protects tun2socks engine Start/Stop
 )
 
+var (
+	totalUploadBytes   int64
+	totalDownloadBytes int64
+	bytesMu            sync.RWMutex
+)
+
+func addUploadBytes(n int64) {
+	bytesMu.Lock()
+	totalUploadBytes += n
+	bytesMu.Unlock()
+}
+
+func addDownloadBytes(n int64) {
+	bytesMu.Lock()
+	totalDownloadBytes += n
+	bytesMu.Unlock()
+}
+
+type trackingConn struct {
+	net.Conn
+}
+
+func (t *trackingConn) Read(b []byte) (n int, err error) {
+	n, err = t.Conn.Read(b)
+	if n > 0 {
+		addDownloadBytes(int64(n))
+	}
+	return
+}
+
+func (t *trackingConn) Write(b []byte) (n int, err error) {
+	n, err = t.Conn.Write(b)
+	if n > 0 {
+		addUploadBytes(int64(n))
+	}
+	return
+}
+
 // Bandwidth holds upload and download counters.
 type Bandwidth struct {
 	Up   int64
@@ -46,6 +84,11 @@ func StartClient(configPath string, logPath string) error {
 		return fmt.Errorf("client is already running")
 	}
 	mu.Unlock()
+
+	bytesMu.Lock()
+	totalUploadBytes = 0
+	totalDownloadBytes = 0
+	bytesMu.Unlock()
 
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return fmt.Errorf("create log directory: %w", err)
@@ -103,7 +146,7 @@ func StartClient(configPath string, logPath string) error {
 		socks5.WithDial(func(_ context.Context, _, addr string) (net.Conn, error) {
 			s := factory(addr)
 			log.Printf("[socks] new session %x for %s", s.ID[:4], addr)
-			return isocks.NewVirtualConn(s), nil
+			return &trackingConn{Conn: isocks.NewVirtualConn(s)}, nil
 		}),
 		socks5.WithAssociateHandle(func(_ context.Context, w io.Writer, _ *socks5.Request) error {
 			_ = socks5.SendReply(w, statute.RepCommandNotSupported, nil)
@@ -297,8 +340,12 @@ func IsTunBridgeRunning() bool {
 
 // GetTunBandwidth returns upload and download bytes.
 func GetTunBandwidth() *Bandwidth {
-	up, down := tun.GetTunBandwidth()
-	return &Bandwidth{Up: up, Down: down}
+	bytesMu.RLock()
+	defer bytesMu.RUnlock()
+	return &Bandwidth{
+		Up:   totalUploadBytes,
+		Down: totalDownloadBytes,
+	}
 }
 
 // GetDNSMapping returns the hostname for a fake IP

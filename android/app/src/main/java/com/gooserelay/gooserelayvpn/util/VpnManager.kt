@@ -170,12 +170,10 @@ object VpnManager {
     }
 
     fun startTrafficMonitor(context: Context) {
-        val appContext = context.applicationContext
-        val uid = appContext.applicationInfo.uid
         trafficMonitorJob?.cancel()
         trafficMonitorJob = monitorScope.launch {
-            var prevTx = TrafficStats.getUidTxBytes(uid).coerceAtLeast(0L)
-            var prevRx = TrafficStats.getUidRxBytes(uid).coerceAtLeast(0L)
+            var prevTx = 0L
+            var prevRx = 0L
             var prevTime = System.currentTimeMillis()
             val startedAt = prevTime
             _uploadTotalBytes.value = 0L
@@ -184,15 +182,16 @@ object VpnManager {
             while (isActive) {
                 delay(1000L)
                 val now = System.currentTimeMillis()
-                val tx = TrafficStats.getUidTxBytes(uid).coerceAtLeast(0L)
-                val rx = TrafficStats.getUidRxBytes(uid).coerceAtLeast(0L)
+                val bandwidth = mobile.Mobile.getTunBandwidth()
+                val tx = bandwidth?.up ?: 0L
+                val rx = bandwidth?.down ?: 0L
                 val dt = (now - prevTime).coerceAtLeast(1L)
                 val uploadDelta = (tx - prevTx).coerceAtLeast(0L)
                 val downloadDelta = (rx - prevRx).coerceAtLeast(0L)
                 _uploadSpeedBps.value = (uploadDelta * 1000L) / dt
                 _downloadSpeedBps.value = (downloadDelta * 1000L) / dt
-                _uploadTotalBytes.value = _uploadTotalBytes.value + uploadDelta
-                _downloadTotalBytes.value = _downloadTotalBytes.value + downloadDelta
+                _uploadTotalBytes.value = tx
+                _downloadTotalBytes.value = rx
                 _connectedDurationSeconds.value = ((now - startedAt) / 1000L).coerceAtLeast(0L)
                 prevTx = tx
                 prevRx = rx
