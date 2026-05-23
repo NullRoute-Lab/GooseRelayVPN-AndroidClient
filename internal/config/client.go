@@ -43,10 +43,11 @@ type Client struct {
 	CoalesceMaxMs  int
 
 	// IdleSlotsPerBucket controls how many concurrent idle long-polls the
-	// carrier maintains per account bucket. Default 1 (matches the bucket
-	// model's safe baseline). Raising to 2–3 increases download throughput
-	// when an account has multiple deployments, at the cost of more
-	// simultaneous executions on that account. 0 = use default.
+	// carrier maintains per account bucket. Default 2 (best balance of
+	// download throughput and Apps Script per-account concurrency headroom
+	// when each account has 2+ deployments). Lower to 1 if your accounts
+	// have only a single deployment each and you see issue #56-style 429s.
+	// Raise to 3 for accounts with 3+ deployments. 0 = use default.
 	IdleSlotsPerBucket int
 }
 
@@ -323,15 +324,15 @@ func LoadClient(path string) (*Client, error) {
 	relayURLs = dedupeStrings(relayURLs)
 
 	key := strings.TrimSpace(f.TunnelKey)
-	if key == "" || key == "REPLACE_WITH_OUTPUT_OF_scripts_gen-key.sh" {
-		return nil, fmt.Errorf("tunnel_key is empty or still the placeholder text in %s.\n  Fix: generate a key with 'bash scripts/gen-key.sh' and paste the 64-character output into the tunnel_key field. The same value must be in server_config.json", path)
+	if key == "" || key == "REPLACE_WITH_64_HEX_CHARACTER_RANDOM_KEY" {
+		return nil, fmt.Errorf("tunnel_key is empty or still the placeholder text in %s.\n  Fix: generate a key with 'openssl rand -hex 32' and paste the 64-character output into the tunnel_key field. The same value must be in server_config.json", path)
 	}
 	if len(key) != 64 {
-		return nil, fmt.Errorf("tunnel_key must be exactly 64 hex characters (got %d) in %s.\n  Fix: generate a fresh key with 'bash scripts/gen-key.sh' and paste the full output. Use the SAME value in client_config.json and server_config.json", len(key), path)
+		return nil, fmt.Errorf("tunnel_key must be exactly 64 hex characters (got %d) in %s.\n  Fix: generate a fresh key with 'openssl rand -hex 32' and paste the full output. Use the SAME value in client_config.json and server_config.json", len(key), path)
 	}
 	raw, err := hex.DecodeString(key)
 	if err != nil || len(raw) != 32 {
-		return nil, fmt.Errorf("tunnel_key in %s contains non-hex characters.\n  Valid characters are 0-9 and a-f. Generate a fresh key with 'bash scripts/gen-key.sh' and copy it carefully — no spaces, quotes, or extra newlines", path)
+		return nil, fmt.Errorf("tunnel_key in %s contains non-hex characters.\n  Valid characters are 0-9 and a-f. Generate a fresh key with 'openssl rand -hex 32' and copy it carefully — no spaces, quotes, or extra newlines", path)
 	}
 
 	useFronting := len(relayURLs) == 0
@@ -393,7 +394,7 @@ func LoadClient(path string) (*Client, error) {
 	}
 
 	if f.IdleSlotsPerBucket < 0 || f.IdleSlotsPerBucket > 3 {
-		return nil, fmt.Errorf("idle_slots_per_bucket must be 0–3 in %s (got %d). 0 or unset = default (1, safest); 2–3 increases download throughput at the cost of more simultaneous executions per Google account, which can re-trigger issue #56 if your accounts can't sustain that concurrency", path, f.IdleSlotsPerBucket)
+		return nil, fmt.Errorf("idle_slots_per_bucket must be 0–3 in %s (got %d). 0 or unset = default (2); lower to 1 if your accounts have only one deployment each and you see issue #56-style 429s; raise to 3 for accounts with 3+ deployments", path, f.IdleSlotsPerBucket)
 	}
 
 	c := Client{

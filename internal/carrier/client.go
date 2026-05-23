@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/kianmhz/GooseRelayVPN/internal/frame"
@@ -31,13 +35,12 @@ const (
 	// (see idleBackoff) extends this when consecutive polls return no work.
 	pollIdleSleep = 10 * time.Millisecond
 
-	// pureDownloadIdleCap is the minimum number of concurrent idle long-polls
-	// allowed in pure-download mode (no pending TX). The actual cap is
-	// max(pureDownloadIdleCap, len(endpoints)) so multi-endpoint configs get
-	// one idle poll per deployment. This floor ensures single-endpoint configs
-	// keep two slots for redundancy during the pollIdleSleep re-entry window.
-	// Previously this was numWorkers-1 (issue #41: excessive empty POSTs);
-	// a hard cap of 2 overcorrected for multi-endpoint configs (issue #73).
+	// pureDownloadIdleCap is referenced by sanity assertions in the
+	// idle-poll tests. The runtime cap is bucketCount × idleSlotsPerBucket,
+	// applied inside pickRelayEndpoint; this constant is the floor a single
+	// endpoint should provide via implicit per-URL bucketing (unlabeled
+	// endpoints each get their own bucket, so 1 endpoint = 1 bucket = at
+	// least 1 slot; the test asserts ≥ this floor as a smoke check).
 	pureDownloadIdleCap = 2
 
 	// pollTimeout is the per-request HTTP ceiling; should comfortably exceed
@@ -65,7 +68,112 @@ const (
 	// or tail-latency events without changing protocol behavior.
 	endpointBlacklistBaseTTL = 3 * time.Second
 	endpointBlacklistMaxTTL  = 1 * time.Hour
+
+	// Local offline failures should not ramp a mobile client into the 30m/1h
+	// endpoint penalty box. Keep the pause long enough to avoid a tight retry
+	// loop while airplane mode is on, but short enough that new sessions recover
+	// quickly when the network returns.
+	localNetworkOfflineBlacklistTTL = 15 * time.Second
+	localNetworkRecoveryProbeEvery  = 5 * time.Second
+	localNetworkRecoveryProbeTO     = 2 * time.Second
 )
+
+func isLocalNetworkOffline(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		if dnsErr.IsTimeout || dnsErr.IsTemporary || dnsErr.IsNotFound {
+			return true
+		}
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && strings.EqualFold(opErr.Op, "dial") {
+		if opErr.Timeout() || errors.Is(opErr.Err, context.DeadlineExceeded) {
+			return true
+		}
+	}
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) && isLocalOfflineSyscall(syscallErr.Err) {
+		return true
+	}
+	if isLocalOfflineSyscall(err) {
+		return true
+	}
+
+	// Last-resort fallback for platform-specific wrapped messages, especially
+	// Windows WSA errors whose Errno values do not always compare cleanly after
+	// net/http wraps them in url.Error/net.OpError.
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"network is unreachable",
+		"unreachable network",
+		"no route to host",
+		"network is down",
+		"host is down",
+		"host is unreachable",
+		"temporary failure in name resolution",
+		"no such host",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLocalOfflineSyscall checks errno values that indicate the local network
+// stack is offline. The set is intentionally restricted to errnos defined on
+// every supported platform (Linux/macOS/Windows). Linux-only ENONET ("machine
+// is not on the network") is covered by the message-substring fallback in
+// isLocalNetworkOffline.
+func isLocalOfflineSyscall(err error) bool {
+	for _, target := range []error{
+		syscall.ENETUNREACH,
+		syscall.EHOSTUNREACH,
+		syscall.ENETDOWN,
+		syscall.EHOSTDOWN,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func recoveryProbeAddress(cfg Config) string {
+	addr := strings.TrimSpace(cfg.Fronting.GoogleIP)
+	if addr == "" {
+		return ""
+	}
+	if _, _, err := net.SplitHostPort(addr); err == nil {
+		return addr
+	}
+	return net.JoinHostPort(addr, "443")
+}
+
+func readRelayResponseBody(r io.Reader, contentLength int64, limit int) ([]byte, error) {
+	if contentLength > int64(limit) {
+		return nil, fmt.Errorf("relay response too large (%d bytes > %d)", contentLength, limit)
+	}
+	if contentLength >= 0 {
+		body := make([]byte, int(contentLength))
+		if _, err := io.ReadFull(r, body); err != nil {
+			return nil, err
+		}
+		return body, nil
+	}
+	lr := &io.LimitedReader{R: r, N: int64(limit) + 1}
+	body, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > limit {
+		return nil, fmt.Errorf("relay response too large (%d bytes > %d)", len(body), limit)
+	}
+	return body, nil
+}
 
 // Config bundles everything the carrier needs to talk to the relay.
 type Config struct {
@@ -99,12 +207,21 @@ type Config struct {
 }
 
 type relayEndpoint struct {
-	url             string
-	account         string // optional human-readable Google account label, "" = unlabeled
-	blacklistedTill time.Time
-	failCount       int
-	statsOK         uint64
-	statsFail       uint64
+	url                 string
+	account             string // optional human-readable Google account label, "" = unlabeled
+	blacklistedTill     time.Time
+	localNetworkOffline bool
+	failCount           int
+	statsOK             uint64
+	statsFail           uint64
+
+	// bucket is the key into Client.inFlightByBucket. For labeled endpoints
+	// it is "acct:"+account so all deployments under one Google account share
+	// a single in-flight semaphore (Apps Script throttles per-account). For
+	// unlabeled endpoints it is "url:"+url so each deployment gets its own
+	// implicit semaphore — that matches v1.5 behavior where each endpoint
+	// was independently rate-managed.
+	bucket string
 
 	// Per-quota-window counters. dailyCount is the number of HTTP responses
 	// received from Apps Script in the current window; dailyResetAt is the
@@ -126,7 +243,7 @@ type relayEndpoint struct {
 // each configured script URL. Total workers = workersPerEndpoint × len(endpoints).
 // Scaling with endpoint count means adding more deployment IDs increases
 // parallelism rather than just spreading the same fixed pool thinner.
-const workersPerEndpoint = 4
+const workersPerEndpoint = 3
 
 // waker is a broadcast notifier: Broadcast() wakes all goroutines currently
 // blocked on C() simultaneously, unlike a buffered chan which only wakes one.
@@ -160,10 +277,10 @@ type Client struct {
 	httpClients        []*http.Client // one per SNI host; round-robined per request
 	nextHTTP           atomic.Uint64  // round-robin index into httpClients
 	debugTiming        bool
-	numWorkers         int // (workersPerEndpoint + idleSlotsPerBucket - 1) × bucketCount
-	bucketCount        int // distinct account labels in endpoints; unlabeled all share one bucket
-	idleSlotsPerBucket int // resolved from Config.IdleSlotsPerBucket, default 1
-	clientVersion     string
+	numWorkers         int // workersPerEndpoint × len(endpoints); semaphore caps actual in-flight
+	bucketCount        int // distinct in-flight buckets; one per labeled account, plus one per unlabeled endpoint
+	idleSlotsPerBucket int // resolved from Config.IdleSlotsPerBucket; max concurrent polls per bucket
+	clientVersion      string
 
 	// clientID is a random 16-byte identifier minted once per process. It is
 	// embedded in every encrypted batch so the server can route downstream
@@ -180,12 +297,15 @@ type Client struct {
 	inFlight map[[frame.SessionIDLen]byte]bool
 	txReady  map[[frame.SessionIDLen]byte]struct{} // sessions with pending TX frames
 
-	endpointMu   sync.Mutex
-	endpoints    []relayEndpoint
-	nextEndpoint int
-
-	idlePollMu       sync.Mutex
-	idlePollInFlight int
+	// endpointMu protects endpoints (per-endpoint state), nextEndpoint
+	// (picker round-robin cursor), and inFlightByBucket (per-account
+	// in-flight semaphore counters). Single mutex because pickRelayEndpoint
+	// needs to atomically (a) find an eligible endpoint and (b) reserve a
+	// semaphore slot.
+	endpointMu       sync.Mutex
+	endpoints        []relayEndpoint
+	nextEndpoint     int
+	inFlightByBucket map[string]int // bucket key → current in-flight poll count
 
 	wake  *waker // broadcasts to all idle poll goroutines simultaneously
 	stats clientStats
@@ -197,6 +317,8 @@ type Client struct {
 	coalesceMu       sync.Mutex
 	coalesceTimer    *time.Timer // armed during a coalesce window; nil otherwise
 	coalesceDeadline time.Time   // hard cap for the in-flight window
+
+	recoveryProbeAddr string
 }
 
 // clientStats holds atomic counters surfaced periodically by statsLoop.
@@ -236,28 +358,35 @@ func New(cfg Config) (*Client, error) {
 		if i < len(cfg.ScriptAccounts) {
 			account = strings.TrimSpace(cfg.ScriptAccounts[i])
 		}
-		endpoints = append(endpoints, relayEndpoint{url: url, account: account})
+		ep := relayEndpoint{url: url, account: account}
+		if account != "" {
+			ep.bucket = "acct:" + account
+		} else {
+			ep.bucket = "url:" + url
+		}
+		endpoints = append(endpoints, ep)
 	}
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("at least one script URL is required")
 	}
 
-	// Concurrency scales with distinct Google account "buckets", not endpoint
-	// count. Apps Script's per-second concurrency cap and ~20k UrlFetchApp/day
-	// quota are per-account: scaling workers/idle-slots by endpoint count
-	// (pre-fix behavior) overloads users who deploy multiple IDs under one
-	// account, causing Apps Script to return HTML error pages instead of the
-	// encrypted batch (issue #56). Unlabeled endpoints all share one anonymous
-	// bucket so legacy configs default to v1.2.0-equivalent load.
-	accountSeen := make(map[string]struct{}, len(endpoints))
+	// Each Google account is one in-flight bucket. Endpoints without an
+	// account label each get their own bucket (Apps Script throttles per
+	// account; we can't tell unlabeled deployments apart, so we conservatively
+	// assume they're all distinct — which matches v1.5 behavior where each
+	// endpoint was independently rate-managed). The in-flight semaphore on
+	// each bucket caps concurrent polls hitting that account, preserving the
+	// per-account anti-abuse protection that motivated v1.6's bucketing
+	// (issue #56) without partitioning the worker pool itself.
+	bucketSeen := make(map[string]struct{}, len(endpoints))
 	labeled := 0
 	for _, ep := range endpoints {
-		accountSeen[ep.account] = struct{}{}
+		bucketSeen[ep.bucket] = struct{}{}
 		if ep.account != "" {
 			labeled++
 		}
 	}
-	bucketCount := len(accountSeen)
+	bucketCount := len(bucketSeen)
 
 	var clientID [frame.ClientIDLen]byte
 	if _, err := rand.Read(clientID[:]); err != nil {
@@ -268,24 +397,33 @@ func New(cfg Config) (*Client, error) {
 
 	idleSlotsPerBucket := cfg.IdleSlotsPerBucket
 	if idleSlotsPerBucket <= 0 {
-		idleSlotsPerBucket = 1
+		idleSlotsPerBucket = 2
 	}
-	// Worker count scales with idleSlotsPerBucket so the TX pool isn't
-	// drained when the user opts up the RX cap. With workersPerEndpoint=3
-	// and idleSlotsPerBucket=1, this reduces to the old 3×bucketCount.
-	// At idleSlotsPerBucket=2, each bucket gets +1 worker so the same
-	// number of workers stay free for TX after the extra idle slot is
-	// camped — the alternative (fixed worker count) starves session
-	// establishment under TX bursts when more workers are tied to long
-	// polls.
-	numWorkers := (workersPerEndpoint + idleSlotsPerBucket - 1) * bucketCount
-	log.Printf("[carrier] %d worker(s) across %d account bucket(s) (%d endpoint(s)), %d idle slot(s)/bucket",
-		numWorkers, bucketCount, len(endpoints), idleSlotsPerBucket)
-	if labeled == 0 && len(endpoints) > 1 {
-		log.Printf("[carrier] WARN: %d deployments configured with no account labels — treating as one bucket. "+
-			"If these deployments are under different Google accounts, label them in script_keys "+
-			"as {\"id\": \"...\", \"account\": \"A\"} to unlock per-account parallelism.",
-			len(endpoints))
+	// Single-bucket configs (one endpoint or one labeled account) need at
+	// least pureDownloadIdleCap idle slots so the gap during pollIdleSleep
+	// re-entry doesn't stall pure-download throughput (one slot is held by
+	// the active long-poll; the other rotates in as that one returns).
+	// Multi-bucket configs already have multiple concurrent slots across
+	// buckets, so the per-bucket floor only matters when bucketCount=1.
+	if bucketCount == 1 && idleSlotsPerBucket < pureDownloadIdleCap {
+		idleSlotsPerBucket = pureDownloadIdleCap
+	}
+	// Worker count scales with endpoint count (v1.5 behavior). v1.6's
+	// bucket-scaled worker pool starved the picker on the common case of
+	// multiple deployments under one account or unlabeled configs —
+	// issue #113 (slower than v1.5 despite "more workers") and the
+	// implicit regression for legacy configs (5 unlabeled endpoints gave
+	// only 4 workers vs v1.5's 15). The per-bucket idle-slot semaphore
+	// (pickIdleEndpoint) still caps simultaneous standing polls per
+	// account so issue #56 stays fixed; active polls bypass that cap
+	// because they terminate quickly with TX delivery.
+	numWorkers := workersPerEndpoint * len(endpoints)
+	if labeled > 0 || len(endpoints) == 1 {
+		log.Printf("[carrier] %d worker(s) across %d bucket(s) (%d endpoint(s)), %d idle slot(s)/bucket",
+			numWorkers, bucketCount, len(endpoints), idleSlotsPerBucket)
+	} else {
+		log.Printf("[carrier] %d worker(s) across %d endpoint(s) (no account labels — each endpoint is its own bucket), %d idle slot(s)/endpoint",
+			numWorkers, len(endpoints), idleSlotsPerBucket)
 	}
 
 	return &Client{
@@ -302,9 +440,11 @@ func New(cfg Config) (*Client, error) {
 		inFlight:           make(map[[frame.SessionIDLen]byte]bool),
 		txReady:            make(map[[frame.SessionIDLen]byte]struct{}),
 		endpoints:          endpoints,
+		inFlightByBucket:   make(map[string]int, bucketCount),
 		wake:               newWaker(),
 		coalesceStep:       cfg.CoalesceStep,
 		coalesceMax:        cfg.CoalesceMax,
+		recoveryProbeAddr:  recoveryProbeAddress(cfg),
 	}, nil
 }
 
@@ -412,6 +552,11 @@ func (c *Client) Run(ctx context.Context) error {
 		defer wg.Done()
 		c.runScriptStatsLoop(ctx)
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c.runEndpointRecoveryLoop(ctx)
+	}()
 	wg.Wait()
 	return ctx.Err()
 }
@@ -446,6 +591,65 @@ func (c *Client) runWorker(ctx context.Context) {
 	}
 }
 
+func (c *Client) runEndpointRecoveryLoop(ctx context.Context) {
+	if c.recoveryProbeAddr == "" {
+		return
+	}
+	t := time.NewTicker(localNetworkRecoveryProbeEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if c.runEndpointRecoveryProbeOnce(ctx) {
+				c.wake.Broadcast()
+			}
+		}
+	}
+}
+
+func (c *Client) runEndpointRecoveryProbeOnce(ctx context.Context) bool {
+	if c.recoveryProbeAddr == "" || !c.shouldRunLocalNetworkRecoveryProbe() {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, localNetworkRecoveryProbeTO)
+	defer cancel()
+	dialer := net.Dialer{Timeout: localNetworkRecoveryProbeTO}
+	conn, err := dialer.DialContext(probeCtx, "tcp", c.recoveryProbeAddr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	cleared := c.resetLocalNetworkFailures()
+	if cleared > 0 {
+		log.Printf("[carrier] local network appears reachable again; cleared %d local-offline endpoint backoff(s)", cleared)
+	}
+	return cleared > 0
+}
+
+func (c *Client) shouldRunLocalNetworkRecoveryProbe() bool {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+	if len(c.endpoints) == 0 {
+		return false
+	}
+	now := time.Now()
+	allUnavailable := true
+	hasLocalOffline := false
+	for i := range c.endpoints {
+		ep := &c.endpoints[i]
+		if !ep.blacklistedTill.After(now) {
+			allUnavailable = false
+			break
+		}
+		if ep.localNetworkOffline && ep.blacklistedTill.After(now) {
+			hasLocalOffline = true
+		}
+	}
+	return allUnavailable && hasLocalOffline
+}
+
 // idleBackoff returns how long a worker should sleep after n consecutive
 // no-work polls. The wake channel is selected against this timer so any
 // new TX (kick) cancels the sleep immediately and any held server-side
@@ -468,36 +672,32 @@ func idleBackoff(n int) time.Duration {
 // response frames back to their sessions. Returns true if any work was done
 // (frames sent or received) so the Run loop can decide whether to sleep.
 func (c *Client) pollOnce(ctx context.Context) bool {
-	frames, drainedIDs := c.drainAll()
+	frames, drainedIDs, snaps := c.drainAll()
 	if len(drainedIDs) > 0 {
 		defer c.releaseInFlight(drainedIDs)
 	}
+	// rollbackPending: set to false on success paths (batch delivered to the
+	// exit server, response received) so snapshots are discarded. Stays true
+	// on every other return path so unsent frames are restored to their
+	// sessions and resent on the next poll cycle.
+	rollbackPending := len(snaps) > 0
+	defer func() {
+		if rollbackPending {
+			c.rollbackDrained(snaps)
+		}
+	}()
+	// Idle long-polls (no TX) are subject to the per-bucket idle slot cap so
+	// each Google account holds at most idleSlotsPerBucket simultaneous
+	// standing polls — Apps Script anti-abuse fires when one account sees
+	// too many concurrent UrlFetchApp invocations (issue #56). Active polls
+	// (TX present) bypass the cap because they terminate quickly with the
+	// drained batch; this matches v1.5 behavior. The reservation is tracked
+	// across the attempt loop so same-poll failovers don't hold two slots.
 	isIdlePoll := len(frames) == 0
-	if isIdlePoll {
-		// Allow idleSlotsPerBucket idle long-poll slots per *account bucket* so
-		// each Google account's quota gets the configured number of standing
-		// polls for downstream push. History: a fixed cap of 1 (v1.2.0) starved
-		// multi-deployment configs. Issue #41's fix to numWorkers-1 woke every
-		// long-poll on every chunk and amplified upload bandwidth N-fold.
-		// Issue #73's fix to max(2, len(endpoints)) gave each deployment a slot
-		// — but when multiple deployments shared one Google account, that
-		// overloaded the per-account concurrency cap (issue #56). Scaling by
-		// bucket count is the natural unit Apps Script throttles on; the
-		// idleSlotsPerBucket multiplier lets users who've validated their
-		// accounts can sustain >1 simultaneous poll opt up. pureDownloadIdleCap
-		// is the floor that keeps a single-bucket config from regressing to a
-		// single standing poll.
-		c.mu.Lock()
-		idleCap := c.bucketCount * c.idleSlotsPerBucket
-		if len(c.txReady) == 0 && idleCap < pureDownloadIdleCap {
-			idleCap = pureDownloadIdleCap
-		}
-		c.mu.Unlock()
-		if !c.acquireIdlePollSlot(idleCap) {
-			return false
-		}
-		defer c.releaseIdlePollSlot()
-	}
+	pickedIdleIdx := -1
+	defer func() {
+		c.releaseBucketSlot(pickedIdleIdx)
+	}()
 
 	// Stats: classify poll outcome on return so callers don't have to remember
 	// to bump counters at every terminal point inside the retry loop.
@@ -530,10 +730,35 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		endpointIdx, scriptURL := c.pickRelayEndpoint()
+		// On retry, release the previous attempt's idle slot (if held) so
+		// a same-poll failover doesn't hold two slots simultaneously.
+		if pickedIdleIdx >= 0 {
+			c.releaseBucketSlot(pickedIdleIdx)
+			pickedIdleIdx = -1
+		}
+		var endpointIdx int
+		var scriptURL string
+		if isIdlePoll {
+			endpointIdx, scriptURL = c.pickIdleEndpoint()
+		} else {
+			endpointIdx, scriptURL = c.pickRelayEndpoint()
+		}
 		if endpointIdx < 0 || scriptURL == "" {
-			log.Printf("[carrier] no relay script URLs are configured")
+			c.endpointMu.Lock()
+			anyConfigured := len(c.endpoints) > 0
+			c.endpointMu.Unlock()
+			if !anyConfigured {
+				log.Printf("[carrier] no relay script URLs are configured")
+			}
+			// Otherwise: either all endpoints are blacklisted, or (idle
+			// path only) every non-blacklisted bucket is already at its
+			// idle cap. Per-endpoint blacklist logs were emitted at the
+			// failing transitions; cap pressure is normal under high
+			// concurrent download load. The worker idle-backs off.
 			return false
+		}
+		if isIdlePoll {
+			pickedIdleIdx = endpointIdx
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, scriptURL, bytes.NewReader(body))
@@ -558,7 +783,11 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 			if ctx.Err() != nil {
 				return false
 			}
-			c.markEndpointFailure(endpointIdx)
+			if isLocalNetworkOffline(err) {
+				c.markEndpointLocalNetworkFailure(endpointIdx)
+			} else {
+				c.markEndpointFailure(endpointIdx)
+			}
 			if attempt < maxAttempts {
 				log.Printf("[carrier] relay request failed via %s (attempt %d/%d): %v; retrying alternate script", shortScriptKey(scriptURL), attempt, maxAttempts, err)
 				continue
@@ -568,7 +797,7 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 			return false
 		}
 
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := readRelayResponseBody(resp.Body, resp.ContentLength, maxRelayResponseBodyBytes)
 		_ = resp.Body.Close()
 		if readErr != nil {
 			c.markEndpointFailure(endpointIdx)
@@ -583,6 +812,7 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 		if resp.StatusCode == http.StatusNoContent || len(respBody) == 0 {
 			c.markEndpointSuccess(endpointIdx)
 			pollOK = true
+			rollbackPending = false // batch delivered; server returned no body
 			countFrameBytes(&c.stats.framesOut, &c.stats.bytesOut, frames)
 			return len(frames) > 0
 		}
@@ -619,6 +849,7 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 				continue
 			}
 			log.Printf("[carrier] relay response too large via %s (%d bytes > %d); dropping batch to protect stability", shortScriptKey(scriptURL), len(respBody), maxRelayResponseBodyBytes)
+			rollbackPending = false // request reached the server; we just can't ingest the response
 			return len(frames) > 0
 		}
 		if isLikelyNonBatchRelayPayload(respBody) {
@@ -648,6 +879,7 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 				continue
 			}
 			log.Printf("[carrier] relay response was invalid via %s (possibly HTML/error page instead of encrypted data): %v", shortScriptKey(scriptURL), decodeErr)
+			rollbackPending = false // Apps Script returned a normal-looking 200; the exit server most likely processed the batch even though we can't ingest the response
 			return len(frames) > 0
 		}
 
@@ -656,6 +888,7 @@ func (c *Client) pollOnce(ctx context.Context) bool {
 		}
 		c.markEndpointSuccess(endpointIdx)
 		pollOK = true
+		rollbackPending = false // batch delivered, response decoded
 		countFrameBytes(&c.stats.framesOut, &c.stats.bytesOut, frames)
 		countFrameBytes(&c.stats.framesIn, &c.stats.bytesIn, rxFrames)
 		if c.debugTiming {
@@ -693,6 +926,11 @@ func (c *Client) pickHTTPClient() *http.Client {
 	return c.httpClients[idx%uint64(len(c.httpClients))]
 }
 
+// pickRelayEndpoint picks the next non-blacklisted endpoint in round-robin
+// order. The per-bucket in-flight semaphore is enforced separately by
+// acquireBucketSlot/releaseBucketSlot — only idle long-polls are gated by it
+// (matches v1.5 behavior; active polls carrying TX terminate quickly with the
+// drained payload and don't camp an account's concurrency budget).
 func (c *Client) pickRelayEndpoint() (int, string) {
 	c.endpointMu.Lock()
 	defer c.endpointMu.Unlock()
@@ -713,17 +951,75 @@ func (c *Client) pickRelayEndpoint() (int, string) {
 		return idx, ep.url
 	}
 
-	// All endpoints are unavailable. Pick the one that frees up soonest.
-	chosen := 0
-	soonest := c.endpoints[0].blacklistedTill
-	for i := 1; i < n; i++ {
-		if c.endpoints[i].blacklistedTill.Before(soonest) {
-			chosen = i
-			soonest = c.endpoints[i].blacklistedTill
-		}
+	// Every endpoint is blacklisted. Refuse to send rather than hammer
+	// flagged deployments (issues #121, #126). The worker will idle-backoff
+	// until the soonest TTL elapses.
+	return -1, ""
+}
+
+// pickIdleEndpoint is like pickRelayEndpoint but also requires the candidate
+// endpoint's bucket to have an idle long-poll slot available, and reserves
+// that slot atomically. Callers MUST pair a successful pick (idx >= 0) with
+// releaseBucketSlot(idx). Returns -1 if every non-blacklisted endpoint's
+// bucket is already at the per-bucket idle cap — the worker idle-backs off.
+func (c *Client) pickIdleEndpoint() (int, string) {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+
+	n := len(c.endpoints)
+	if n == 0 {
+		return -1, ""
 	}
-	c.nextEndpoint = (chosen + 1) % n
-	return chosen, c.endpoints[chosen].url
+	now := time.Now()
+	start := c.nextEndpoint % n
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		ep := &c.endpoints[idx]
+		if ep.blacklistedTill.After(now) {
+			continue
+		}
+		if c.inFlightByBucket[ep.bucket] >= c.idleSlotsPerBucket {
+			continue
+		}
+		c.inFlightByBucket[ep.bucket]++
+		c.nextEndpoint = (idx + 1) % n
+		return idx, ep.url
+	}
+	return -1, ""
+}
+
+// releaseBucketSlot frees the idle slot reserved by pickIdleEndpoint. Safe
+// to call with idx < 0 (no-op).
+func (c *Client) releaseBucketSlot(idx int) {
+	if idx < 0 {
+		return
+	}
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+	if idx >= len(c.endpoints) {
+		return
+	}
+	bucket := c.endpoints[idx].bucket
+	if c.inFlightByBucket[bucket] > 0 {
+		c.inFlightByBucket[bucket]--
+	}
+}
+
+func (c *Client) resetLocalNetworkFailures() int {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+	cleared := 0
+	for i := range c.endpoints {
+		ep := &c.endpoints[i]
+		if !ep.localNetworkOffline {
+			continue
+		}
+		ep.blacklistedTill = time.Time{}
+		ep.failCount = 0
+		ep.localNetworkOffline = false
+		cleared++
+	}
+	return cleared
 }
 
 func (c *Client) markEndpointSuccess(endpointIdx int) {
@@ -738,6 +1034,7 @@ func (c *Client) markEndpointSuccess(endpointIdx int) {
 	url := ep.url
 	ep.failCount = 0
 	ep.blacklistedTill = time.Time{}
+	ep.localNetworkOffline = false
 	c.endpointMu.Unlock()
 	if wasFailing {
 		log.Printf("[carrier] endpoint %s recovered (back in rotation)", shortScriptKey(url))
@@ -748,6 +1045,27 @@ func (c *Client) markEndpointSuccess(endpointIdx int) {
 // for transient failures (network errors, 5xx, decode failures).
 func (c *Client) markEndpointFailure(endpointIdx int) {
 	c.markEndpointFailureWith(endpointIdx, 0)
+}
+
+func (c *Client) markEndpointLocalNetworkFailure(endpointIdx int) {
+	c.endpointMu.Lock()
+	if endpointIdx < 0 || endpointIdx >= len(c.endpoints) {
+		c.endpointMu.Unlock()
+		return
+	}
+	ep := &c.endpoints[endpointIdx]
+	wasHealthy := ep.failCount == 0 && !ep.blacklistedTill.After(time.Now())
+	ep.failCount = 0
+	ep.statsFail++
+	ep.localNetworkOffline = true
+	ep.blacklistedTill = time.Now().Add(localNetworkOfflineBlacklistTTL)
+	url := ep.url
+	peerCount := len(c.endpoints) - 1
+	c.endpointMu.Unlock()
+	if wasHealthy {
+		log.Printf("[carrier] endpoint %s local network offline; retrying in %s (still rotating across %d others)",
+			shortScriptKey(url), localNetworkOfflineBlacklistTTL.Round(time.Second), peerCount)
+	}
 }
 
 // markEndpoint403 handles HTTP 403 (quota exhausted or deployment misconfigured).
@@ -788,6 +1106,7 @@ func (c *Client) markEndpointFailureWith(endpointIdx, minFailCount int) {
 	}
 	ep.failCount++
 	ep.statsFail++
+	ep.localNetworkOffline = false
 	ttl := endpointBlacklistTTL(ep.failCount)
 	ep.blacklistedTill = time.Now().Add(ttl)
 	url := ep.url
@@ -823,11 +1142,12 @@ func endpointBlacklistTTL(failCount int) time.Duration {
 	}
 }
 
-func (c *Client) drainAll() ([]*frame.Frame, [][frame.SessionIDLen]byte) {
+func (c *Client) drainAll() ([]*frame.Frame, [][frame.SessionIDLen]byte, map[[frame.SessionIDLen]byte]*session.DrainSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []*frame.Frame
 	var drainedIDs [][frame.SessionIDLen]byte
+	snaps := map[[frame.SessionIDLen]byte]*session.DrainSnapshot{}
 	batchCap := maxDrainFramesPerBatch
 	if len(c.sessions) >= busySessionThreshold {
 		batchCap = maxDrainFramesPerBatchBusy
@@ -870,13 +1190,16 @@ func (c *Client) drainAll() ([]*frame.Frame, [][frame.SessionIDLen]byte) {
 		if remaining < perSessionCap {
 			perSessionCap = remaining
 		}
-		frames := s.DrainTxLimited(MaxFramePayload, perSessionCap)
+		frames, snap := s.DrainTxLimitedTxn(MaxFramePayload, perSessionCap)
 		delete(c.txReady, id) // remove now; OnTx re-adds if more data arrives
 		if len(frames) == 0 {
 			return
 		}
 		c.inFlight[id] = true
 		drainedIDs = append(drainedIDs, id)
+		if snap != nil {
+			snaps[id] = snap
+		}
 		out = append(out, frames...)
 		remaining -= len(frames)
 	}
@@ -891,7 +1214,32 @@ func (c *Client) drainAll() ([]*frame.Frame, [][frame.SessionIDLen]byte) {
 	for _, r := range refs {
 		drain(r.id, false)
 	}
-	return out, drainedIDs
+	return out, drainedIDs, snaps
+}
+
+// rollbackDrained restores every session named in snaps to its pre-drain
+// state. Used on failure paths where the batch never reached the exit server
+// (transport error, Apps Script rejection, etc.) so the SYN/payload can be
+// retransmitted on the next poll instead of being silently lost.
+func (c *Client) rollbackDrained(snaps map[[frame.SessionIDLen]byte]*session.DrainSnapshot) {
+	if len(snaps) == 0 {
+		return
+	}
+	c.mu.Lock()
+	type pending struct {
+		s    *session.Session
+		snap *session.DrainSnapshot
+	}
+	out := make([]pending, 0, len(snaps))
+	for id, snap := range snaps {
+		if s, ok := c.sessions[id]; ok {
+			out = append(out, pending{s: s, snap: snap})
+		}
+	}
+	c.mu.Unlock()
+	for _, p := range out {
+		p.s.RollbackDrain(p.snap)
+	}
 }
 
 func (c *Client) releaseInFlight(ids [][frame.SessionIDLen]byte) {
@@ -957,24 +1305,6 @@ func (c *Client) gcDoneSessions() {
 			}
 			c.stats.sessionsClose.Add(1)
 		}
-	}
-}
-
-func (c *Client) acquireIdlePollSlot(cap int) bool {
-	c.idlePollMu.Lock()
-	defer c.idlePollMu.Unlock()
-	if c.idlePollInFlight >= cap {
-		return false
-	}
-	c.idlePollInFlight++
-	return true
-}
-
-func (c *Client) releaseIdlePollSlot() {
-	c.idlePollMu.Lock()
-	defer c.idlePollMu.Unlock()
-	if c.idlePollInFlight > 0 {
-		c.idlePollInFlight--
 	}
 }
 

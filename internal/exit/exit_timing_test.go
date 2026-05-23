@@ -20,6 +20,38 @@ import (
 
 const exitTimingTestKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, errors.New("reader should not be called")
+}
+
+func TestReadTunnelRequestBodyBoundsAndPreallocates(t *testing.T) {
+	_, err := readTunnelRequestBody(bytes.NewReader([]byte("abcdef")), -1, 5)
+	if err == nil {
+		t.Fatal("readTunnelRequestBody succeeded for over-limit unknown-length body")
+	}
+	if !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("readTunnelRequestBody err = %v, want errRequestTooLarge", err)
+	}
+
+	_, err = readTunnelRequestBody(errReader{}, 6, 5)
+	if err == nil {
+		t.Fatal("readTunnelRequestBody succeeded for over-limit Content-Length")
+	}
+	if !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("readTunnelRequestBody err = %v, want errRequestTooLarge", err)
+	}
+
+	got, err := readTunnelRequestBody(bytes.NewReader([]byte("abcde")), int64(len("abcde")), 5)
+	if err != nil {
+		t.Fatalf("readTunnelRequestBody: %v", err)
+	}
+	if string(got) != "abcde" {
+		t.Fatalf("readTunnelRequestBody = %q, want abcde", got)
+	}
+}
+
 func mustExitTimingServer(tb testing.TB) *Server {
 	tb.Helper()
 	s, err := New(Config{ListenAddr: "127.0.0.1:0", AESKeyHex: exitTimingTestKeyHex})
@@ -522,6 +554,56 @@ func TestDrainAll_RespectsByteBudget(t *testing.T) {
 		t.Fatalf("estimated wire response = %d bytes, exceeds carrier client cap %d",
 			estimatedWireBytes, clientCap)
 	}
+}
+
+func TestDrainAll_CapsInitialResponseOnly(t *testing.T) {
+	s := mustExitTimingServer(t)
+	id := benchSessionID(777)
+	var owner [frame.ClientIDLen]byte
+	owner[0] = 0x77
+
+	payload := bytes.Repeat([]byte("x"), maxResponseBytesPreEncode)
+	sess := session.New(id, "x:1", false)
+	sess.EnqueueTx(payload)
+	s.sessions[id] = sess
+	s.sessionOwners[id] = owner
+	s.firstReply[id] = struct{}{}
+	s.txReady[id] = struct{}{}
+
+	frames, urgent := s.drainAll(owner, maxResponseBytesPreEncode)
+	if !urgent {
+		t.Fatal("first downstream response should be urgent")
+	}
+	firstBytes := sumFramePayloadBytes(frames)
+	if firstBytes == 0 {
+		t.Fatal("first drain returned no payload")
+	}
+	if firstBytes > s.initialResponseBytesPreEncode {
+		t.Fatalf("first response bytes = %d, want <= %d", firstBytes, s.initialResponseBytesPreEncode)
+	}
+	if _, stillFirst := s.firstReply[id]; stillFirst {
+		t.Fatal("firstReply marker was not cleared after first downstream drain")
+	}
+	if !sess.HasPendingTx() {
+		t.Fatal("test setup expected payload to remain after capped first response")
+	}
+
+	frames, urgent = s.drainAll(owner, maxResponseBytesPreEncode)
+	if urgent {
+		t.Fatal("second downstream response should not be urgent after firstReply is cleared")
+	}
+	secondBytes := sumFramePayloadBytes(frames)
+	if secondBytes <= s.initialResponseBytesPreEncode {
+		t.Fatalf("second response bytes = %d, want normal larger drain above %d", secondBytes, s.initialResponseBytesPreEncode)
+	}
+}
+
+func sumFramePayloadBytes(frames []*frame.Frame) int {
+	var total int
+	for _, f := range frames {
+		total += len(f.Payload)
+	}
+	return total
 }
 
 // BenchmarkExitRouteIncoming_NSessions measures the cost of routing a data

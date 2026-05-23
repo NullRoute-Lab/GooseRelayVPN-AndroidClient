@@ -1,7 +1,9 @@
 package carrier
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,32 @@ import (
 )
 
 const testKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+type carrierErrReader struct{}
+
+func (carrierErrReader) Read([]byte) (int, error) {
+	return 0, errors.New("reader should not be called")
+}
+
+func TestReadRelayResponseBodyBoundsAndPreallocates(t *testing.T) {
+	_, err := readRelayResponseBody(bytes.NewReader([]byte("abcdef")), -1, 5)
+	if err == nil {
+		t.Fatal("readRelayResponseBody succeeded for over-limit unknown-length body")
+	}
+
+	_, err = readRelayResponseBody(carrierErrReader{}, 6, 5)
+	if err == nil {
+		t.Fatal("readRelayResponseBody succeeded for over-limit Content-Length")
+	}
+
+	got, err := readRelayResponseBody(bytes.NewReader([]byte("abcde")), int64(len("abcde")), 5)
+	if err != nil {
+		t.Fatalf("readRelayResponseBody: %v", err)
+	}
+	if string(got) != "abcde" {
+		t.Fatalf("readRelayResponseBody = %q, want abcde", got)
+	}
+}
 
 // echoServer decodes the incoming batch, echoes each frame's payload back
 // (with the SYN bit cleared and seq reset per session), and returns it.
@@ -266,7 +294,7 @@ func TestCarrier_PureDownloadIdleCap(t *testing.T) {
 
 	// Four endpoints labeled under four distinct accounts → bucketCount = 4,
 	// numWorkers = workersPerEndpoint × 4 = 12. Pre-fix idleCap would have been
-	// numWorkers-1 = 11; new cap is max(pureDownloadIdleCap, bucketCount) = 4.
+	// numWorkers-1 = 11; new cap is bucketCount × idleSlotsPerBucket.
 	// Labeling matters: with no labels these would collapse to one bucket and
 	// the test wouldn't exercise the cap.
 	urls := []string{
@@ -307,14 +335,14 @@ func TestCarrier_PureDownloadIdleCap(t *testing.T) {
 	gotTotal := totalReq
 	mu.Unlock()
 
-	wantCap := pureDownloadIdleCap
-	if c.bucketCount > wantCap {
-		wantCap = c.bucketCount
+	wantCap := c.bucketCount * c.idleSlotsPerBucket
+	if wantCap < pureDownloadIdleCap {
+		wantCap = pureDownloadIdleCap
 	}
 	if gotPeak > wantCap {
 		t.Fatalf("peak concurrent idle long-polls = %d, want ≤ %d "+
-			"(numWorkers=%d, buckets=%d, len(endpoints)=%d, totalReq=%d)",
-			gotPeak, wantCap, c.numWorkers, c.bucketCount, len(c.endpoints), gotTotal)
+			"(numWorkers=%d, buckets=%d, idleSlotsPerBucket=%d, len(endpoints)=%d, totalReq=%d)",
+			gotPeak, wantCap, c.numWorkers, c.bucketCount, c.idleSlotsPerBucket, len(c.endpoints), gotTotal)
 	}
 	if gotPeak == 0 {
 		t.Fatal("no polls were issued; test did not exercise the cap")
@@ -323,7 +351,7 @@ func TestCarrier_PureDownloadIdleCap(t *testing.T) {
 
 // TestCarrier_IdleSlotsPerBucket verifies that the IdleSlotsPerBucket config
 // knob multiplies the per-bucket idle long-poll cap. With 2 buckets and
-// IdleSlotsPerBucket=2, the cap should be 4 (not 2 from the default of 1).
+// IdleSlotsPerBucket=2, the cap should be 4 (= bucketCount × slots).
 func TestCarrier_IdleSlotsPerBucket(t *testing.T) {
 	aead, err := frame.NewCryptoFromHexKey(testKeyHex)
 	if err != nil {
@@ -358,10 +386,9 @@ func TestCarrier_IdleSlotsPerBucket(t *testing.T) {
 
 	// 4 endpoints, 2 distinct accounts (A,A,B,B), IdleSlotsPerBucket=2:
 	//   bucketCount=2, idleCap=bucketCount×IdleSlotsPerBucket=4,
-	//   numWorkers=(workersPerEndpoint+IdleSlotsPerBucket-1)×bucketCount=8.
-	// The +1 worker per bucket preserves TX capacity when the extra idle
-	// slot camps an additional worker on a long-poll. Default
-	// IdleSlotsPerBucket=1 would cap at 2 idle slots and 6 workers.
+	//   numWorkers=workersPerEndpoint×len(endpoints)=12.
+	// The test passes IdleSlotsPerBucket=2 explicitly to make the assertion
+	// independent of the default value.
 	urls := []string{srv.URL + "/a", srv.URL + "/b", srv.URL + "/c", srv.URL + "/d"}
 	accounts := []string{"A", "A", "B", "B"}
 	c, err := New(Config{

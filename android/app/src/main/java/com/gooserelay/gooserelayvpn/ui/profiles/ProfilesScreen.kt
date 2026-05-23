@@ -268,7 +268,7 @@ private fun ProfileEditorDialog(
     var scriptKeyEntries by remember { mutableStateOf(parseScriptKeysText(profile?.scriptKeysText ?: "").ifEmpty { listOf(ScriptKeyEntry()) }) }
     var tunnelKey by remember { mutableStateOf(profile?.tunnelKey ?: "") }
     var coalesceStepMs by remember { mutableStateOf((profile?.coalesceStepMs ?: 0).toString()) }
-    var idleSlotsPerBucket by remember { mutableStateOf((profile?.idleSlotsPerBucket ?: 1).toString()) }
+    var idleSlotsPerBucket by remember { mutableStateOf((profile?.idleSlotsPerBucket ?: 2).toString()) }
     var showErrorDialog by remember { mutableStateOf<String?>(null) }
 
     Log.d("ProfilesScreen", "=== DIALOG INIT === profile=${profile?.name ?: "NEW"}")
@@ -338,7 +338,7 @@ private fun ProfileEditorDialog(
             scriptKeyEntries = parseScriptKeysText(keys)
             Log.d("ProfilesScreen", "After parsing, scriptKeyEntries has ${scriptKeyEntries.size} items")
             coalesceStepMs = (root.get("coalesce_step_ms")?.asInt ?: 0).toString()
-            idleSlotsPerBucket = (root.get("idle_slots_per_bucket")?.asInt?.coerceIn(1, 3) ?: 1).toString()
+            idleSlotsPerBucket = (root.get("idle_slots_per_bucket")?.asInt?.coerceIn(1, 3) ?: 2).toString()
             tunnelKey = root.get("tunnel_key")?.asString ?: tunnelKey
         }
     }
@@ -358,7 +358,7 @@ private fun ProfileEditorDialog(
             scriptKeysText = scriptKeysToText(scriptKeyEntries),
             tunnelKey = tunnelKey,
             coalesceStepMs = coalesceStepMs.toIntOrNull() ?: 0,
-            idleSlotsPerBucket = idleSlotsPerBucket.toIntOrNull()?.coerceIn(1, 3) ?: 1,
+            idleSlotsPerBucket = idleSlotsPerBucket.toIntOrNull()?.coerceIn(1, 3) ?: 2,
             isSelected = profile?.isSelected ?: false,
             createdAt = profile?.createdAt ?: System.currentTimeMillis()
         )
@@ -402,7 +402,7 @@ private fun ProfileEditorDialog(
                         scriptKeysText = scriptKeysForSave,
                         tunnelKey = tunnelKey,
                         coalesceStepMs = coalesceStepMs.toIntOrNull() ?: 0,
-                        idleSlotsPerBucket = idleSlotsPerBucket.toIntOrNull()?.coerceIn(1, 3) ?: 1,
+                        idleSlotsPerBucket = idleSlotsPerBucket.toIntOrNull()?.coerceIn(1, 3) ?: 2,
                         isSelected = profile?.isSelected ?: false,
                         createdAt = profile?.createdAt ?: System.currentTimeMillis()
                     )
