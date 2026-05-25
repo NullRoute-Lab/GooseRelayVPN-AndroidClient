@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
@@ -66,6 +67,8 @@ class GooseRelayVpnService : VpnService() {
     private var sharingHttpServer: java.net.ServerSocket? = null
     private var logTailJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var keepaliveJob: Job? = null
     private var isStopping = false
     @Volatile
     private var tunBridgeActive = false
@@ -197,35 +200,14 @@ class GooseRelayVpnService : VpnService() {
                 }
 
                 if (proxyMode) {
-                    VpnManager.appendLog("Proxy mode active: establishing dummy VPN interface to prevent background freezing")
-                    try {
-                        val builder = Builder()
-                            .setSession(getString(R.string.app_name) + " (Proxy)")
-                            .setMtu(1500)
-                            .setBlocking(false)
-                            .setUnderlyingNetworks(null)
-                        
-                        // Add a local dummy IP address to avoid routing loop and not hijack any traffic.
-                        builder.addAddress("10.255.255.1", 32)
-                        // Add a route only to the dummy address itself so no device traffic gets intercepted.
-                        builder.addRoute("10.255.255.1", 32)
-                        
-                        vpnInterface = builder.establish()
-                        if (vpnInterface != null) {
-                            VpnManager.appendLog("Dummy TUN interface established (fd=${vpnInterface!!.fd}) for Proxy Mode")
-                        } else {
-                            VpnManager.appendLog("Warning: Could not establish dummy TUN interface, proxy mode will run without it")
-                        }
-                    } catch (e: Exception) {
-                        VpnManager.appendLog("Failed to establish dummy TUN interface: ${e.message}")
-                        Log.e(TAG, "Dummy TUN error", e)
-                    }
-
+                    VpnManager.appendLog("Proxy mode active: skipping Android VpnService TUN setup")
+                    acquireWifiLock()
                     VpnManager.updateState(VpnManager.VpnState.CONNECTED)
                     VpnManager.startTrafficMonitor(this@GooseRelayVpnService)
                     val notification = buildNotification("Proxy mode active on port $socksPort")
                     val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
                     manager.notify(NOTIFICATION_ID, notification)
+                    startKeepalive()
                     return@launch
                 }
 
@@ -465,6 +447,7 @@ class GooseRelayVpnService : VpnService() {
                 goClientJob?.cancel()
                 httpProxyJob?.cancel()
                 sharingSocksJob?.cancel()
+                keepaliveJob?.cancel()
                 logTailJob?.cancel()
 
                 networkCallback?.let {
@@ -533,6 +516,7 @@ class GooseRelayVpnService : VpnService() {
         if (!isStopping) {
             // stopClient() internally handles StopTun + StopTunBridge + cancel
             // with idempotent guards and panic recovery.
+            keepaliveJob?.cancel()
             try { mobile.Mobile.stopClient() } catch (_: Exception) {}
             try {
                 vpnInterface?.close()
@@ -547,6 +531,7 @@ class GooseRelayVpnService : VpnService() {
             networkCallback = null
         }
         releaseWakeLock()
+        releaseWifiLock()
         isStopping = false
         serviceScope.cancel()
         super.onDestroy()
@@ -703,6 +688,33 @@ class GooseRelayVpnService : VpnService() {
             runCatching { lock.release() }
         }
         wakeLock = null
+    }
+
+    private fun acquireWifiLock() {
+        if (wifiLock?.isHeld == true) return
+        val wm = applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager ?: return
+        wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "$TAG:wifi").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWifiLock() {
+        val lock = wifiLock ?: return
+        if (lock.isHeld) {
+            runCatching { lock.release() }
+        }
+        wifiLock = null
+    }
+
+    private fun startKeepalive() {
+        keepaliveJob?.cancel()
+        keepaliveJob = serviceScope.launch {
+            while (isActive) {
+                delay(15_000L)
+                VpnManager.appendCoreLog("keepalive: service alive")
+            }
+        }
     }
 
     private suspend fun startInternetSharing(socksPort: Int, httpPort: Int, username: String, password: String) {
